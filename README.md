@@ -1,10 +1,9 @@
 # UnderCtrl
 
-libs for loading and preprocessing data
-
-- datasets 
-
-
+## Environment
+```
+pip install -r requirements.txt
+```
 
 ## Dependencies
 
