@@ -1,5 +1,3 @@
 .DS_Store
 training/
 test_imgs/__pycache__
-test_imgs/fill50k.py
-test_imgs/main.py
