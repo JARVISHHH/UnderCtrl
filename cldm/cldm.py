@@ -4,6 +4,8 @@ from keras_cv.src.models.stable_diffusion.padded_conv2d import PaddedConv2D
 from cldm.diffuser import ResBlock, SpatialTransformer, Upsample
 from utils import ZeroPaddedConv2D
 
+from transformers import CLIPTextModel, CLIPTokenizer
+
 # The copied ControlNet
 class ControlNet(keras.Model):
     def __init__(
@@ -221,97 +223,93 @@ class ControlledUnetModel(keras.Model):
 class ControlLDM(keras.Model):
     def __init__(
         self,
-        diffusion_model,
-        control_model,
         vae,
+        tokenizer: CLIPTokenizer,
+        text_encoder: CLIPTextModel,
+        control_net: ControlNet,
+        controlled_unet: ControlledUnetModel,
         noise_scheduler,
-        use_mixed_precision=False,
-        max_grad_norm=1.0,
-        **kwargs
+        *kwargs
     ):
         super().__init__(**kwargs)
 
-        self.diffusion_model = diffusion_model
-        self.control_model = control_model
         self.vae = vae
+        self.tokenizer = tokenizer
+        self.text_encoder = text_encoder
+        self.control_net = control_net
+        self.controlled_unet = controlled_unet
         self.noise_scheduler = noise_scheduler
-        self.max_grad_norm = max_grad_norm
+        self.loss_fn = tf.keras.losses.MeanSquaredError()
 
-        self.use_mixed_precision = use_mixed_precision
-        self.vae.trainable = False
+    def train_step(self, inputs):
+        images = inputs["image"]
+        captions = inputs["image_caption"]
+        controls = inputs["image_seg"]
+        
+        tokens = self.tokenizer(
+            captions,
+            padding="max_length",
+            truncation=True,
+            max_length=77,
+            return_tensors="tf",
+        )
+        context = self.text_encoder(tokens.input_ids)[0]
 
-        self.control_key = "hint"
+        with tf.GradientTape() as tape:
+            # Use VAE as the encoder
+            latents = self.vae.encode(images)[0]
+            # Magic number: https://keras.io/examples/generative/fine_tune_via_textual_inversion/
+            latents = latents * 0.18215
 
-    # def train_step(self, inputs):
-    #     images = inputs["images"]
-    #     encoded_text = inputs["encoded_text"]
-    #     control = inputs[self.control_key]
-    #     batch_size = tf.shape(images)[0]
+            batch_size = tf.shape(latents)[0]
+            timesteps = tf.random.uniform((batch_size,), minval=0, maxval=1000, dtype=tf.int32)
 
-    #     with tf.GradientTape() as tape:
-    #         # Project image into the latent space and sample from it.
-    #         latents = self.sample_from_encoder_outputs(self.vae(images, training=False))
-    #         # Know more about the magic number here:
-    #         # https://keras.io/examples/generative/fine_tune_via_textual_inversion/
-    #         latents = latents * 0.18215
+            noise = tf.random.normal(tf.shape(latents))
 
-    #         # Sample noise that we'll add to the latents.
-    #         noise = tf.random.normal(tf.shape(latents))
+            timesteps = np.random.randint(
+                0, self.noise_scheduler.train_timesteps, (batch_size,)
+            )
 
-    #         # Sample a random timestep for each image.
-    #         timesteps = np.random.randint(
-    #             0, self.noise_scheduler.train_timesteps, (batch_size,)
-    #         )
+            # Add noise to the latents
+            noisy_latents = self.noise_scheduler.add_noise(
+                tf.cast(latents, noise.dtype), noise, timesteps
+            )
 
-    #         # Add noise to the latents according to the noise magnitude at each timestep
-    #         # (this is the forward diffusion process).
-    #         noisy_latents = self.noise_scheduler.add_noise(
-    #             tf.cast(latents, noise.dtype), noise, timesteps
-    #         )
+            timestep_embedding = tf.map_fn(
+                lambda t: self.get_timestep_embedding(t), timesteps, dtype=tf.float32
+            )
+            timestep_embedding = tf.squeeze(timestep_embedding, 1)
+            
+            control_outputs = self.control_net([noisy_latents, timestep_embedding, context, controls])
+            
+            unet_prediction = self.unet([noisy_latents, timestep_embedding, context], control=control_outputs)
+            
+            loss = self.loss_fn(noise, unet_prediction)
 
-    #         # Get the target for loss depending on the prediction type
-    #         # just the sampled noise for now.
-    #         target = noise  # noise_schedule.predict_epsilon == True
+        # Update parameters of the diffusion model.
+        trainable_vars = self.controlled_unet.trainable_variables + self.control_net.trainable_variables
+        gradients = tape.gradient(loss, trainable_vars)
+        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
 
-    #         # Predict the noise residual and compute loss.
-    #         timestep_embedding = tf.map_fn(
-    #             lambda t: self.get_timestep_embedding(t), timesteps, dtype=tf.float32
-    #         )
-    #         timestep_embedding = tf.squeeze(timestep_embedding, 1)
-    #         model_pred = self.diffusion_model(
-    #             [noisy_latents, timestep_embedding, encoded_text], training=True
-    #         )
-    #         loss = self.compiled_loss(target, model_pred)
-    #         if self.use_mixed_precision:
-    #             loss = self.optimizer.get_scaled_loss(loss)
+        return { 'loss': loss }
 
-    #     # Update parameters of the diffusion model.
-    #     trainable_vars = self.diffusion_model.trainable_variables
-    #     gradients = tape.gradient(loss, trainable_vars)
-    #     if self.use_mixed_precision:
-    #         gradients = self.optimizer.get_unscaled_gradients(gradients)
-    #     gradients = [tf.clip_by_norm(g, self.max_grad_norm) for g in gradients]
-    #     self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+    def get_timestep_embedding(self, timestep, dim=320, max_period=10000):
+        half = dim // 2
+        log_max_period = tf.math.log(tf.cast(max_period, tf.float32))
+        freqs = tf.math.exp(
+            -log_max_period * tf.range(0, half, dtype=tf.float32) / half
+        )
+        args = tf.convert_to_tensor([timestep], dtype=tf.float32) * freqs
+        embedding = tf.concat([tf.math.cos(args), tf.math.sin(args)], 0)
+        embedding = tf.reshape(embedding, [1, -1])
+        return embedding
 
-    #     return {m.name: m.result() for m in self.metrics}
-
-    # def get_timestep_embedding(self, timestep, dim=320, max_period=10000):
-    #     half = dim // 2
-    #     log_max_period = tf.math.log(tf.cast(max_period, tf.float32))
-    #     freqs = tf.math.exp(
-    #         -log_max_period * tf.range(0, half, dtype=tf.float32) / half
-    #     )
-    #     args = tf.convert_to_tensor([timestep], dtype=tf.float32) * freqs
-    #     embedding = tf.concat([tf.math.cos(args), tf.math.sin(args)], 0)
-    #     embedding = tf.reshape(embedding, [1, -1])
-    #     return embedding
-
-    # def sample_from_encoder_outputs(self, outputs):
-    #     mean, logvar = tf.split(outputs, 2, axis=-1)
-    #     logvar = tf.clip_by_value(logvar, -30.0, 20.0)
-    #     std = tf.exp(0.5 * logvar)
-    #     sample = tf.random.normal(tf.shape(mean), dtype=mean.dtype)
-    #     return mean + std * sample
+    def sample_from_encoder_outputs(self, outputs):
+        mean, logvar = tf.split(outputs, 2, axis=-1)
+        logvar = tf.clip_by_value(logvar, -30.0, 20.0)
+        std = tf.exp(0.5 * logvar)
+        sample = tf.random.normal(tf.shape(mean), dtype=mean.dtype)
+        return mean + std * sample
 
     def save_weights(self, filepath, overwrite=True, save_format=None, options=None):
         self.control_model.save_weights(
