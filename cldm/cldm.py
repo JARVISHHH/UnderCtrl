@@ -1,3 +1,4 @@
+import keras_cv
 from keras_cv.src.backend import keras
 from keras_cv.src.models.stable_diffusion.padded_conv2d import PaddedConv2D
 
@@ -8,10 +9,10 @@ from utils import ZeroPaddedConv2D
 class ControlNet(keras.Model):
     def __init__(
             self,
-            img_height,
-            img_width,
-            max_text_length,
-            hint_image_size,
+            img_height=512,
+            img_width=512,
+            max_text_length=77,
+            hint_image_size=(512, 512),
             name=None,
             download_weights=True, 
         ):
@@ -101,9 +102,9 @@ class ControlNet(keras.Model):
 class ControlledUnetModel(keras.Model):
     def __init__(
         self,
-        img_height,
-        img_width,
-        max_text_length,
+        img_height=512,
+        img_width=512,
+        max_text_length=77,
         name=None,
         control=None,
         download_weights=True, 
@@ -221,22 +222,16 @@ class ControlledUnetModel(keras.Model):
 class ControlLDM(keras.Model):
     def __init__(
         self,
-        vae,
-        tokenizer: CLIPTokenizer,
-        text_encoder: CLIPTextModel,
         control_net: ControlNet,
         controlled_unet: ControlledUnetModel,
-        noise_scheduler,
         *kwargs
     ):
         super().__init__(**kwargs)
 
-        self.vae = vae
-        self.tokenizer = tokenizer
-        self.text_encoder = text_encoder
+        self.vae = keras_cv.models.stable_diffusion.vae.encoder()
         self.control_net = control_net
         self.controlled_unet = controlled_unet
-        self.noise_scheduler = noise_scheduler
+        self.noise_scheduler = keras_cv.models.stable_diffusion.NoiseScheduler()
         self.loss_fn = tf.keras.losses.MeanSquaredError()
 
     def train_step(self, inputs):
@@ -290,29 +285,3 @@ class ControlLDM(keras.Model):
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
 
         return { 'loss': loss }
-
-    def get_timestep_embedding(self, timestep, dim=320, max_period=10000):
-        half = dim // 2
-        log_max_period = tf.math.log(tf.cast(max_period, tf.float32))
-        freqs = tf.math.exp(
-            -log_max_period * tf.range(0, half, dtype=tf.float32) / half
-        )
-        args = tf.convert_to_tensor([timestep], dtype=tf.float32) * freqs
-        embedding = tf.concat([tf.math.cos(args), tf.math.sin(args)], 0)
-        embedding = tf.reshape(embedding, [1, -1])
-        return embedding
-
-    def sample_from_encoder_outputs(self, outputs):
-        mean, logvar = tf.split(outputs, 2, axis=-1)
-        logvar = tf.clip_by_value(logvar, -30.0, 20.0)
-        std = tf.exp(0.5 * logvar)
-        sample = tf.random.normal(tf.shape(mean), dtype=mean.dtype)
-        return mean + std * sample
-
-    def save_weights(self, filepath, overwrite=True, save_format=None, options=None):
-        self.control_model.save_weights(
-            filepath=filepath,
-            overwrite=overwrite,
-            save_format=save_format,
-            options=options,
-        )
