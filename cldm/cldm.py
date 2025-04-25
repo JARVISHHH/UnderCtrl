@@ -4,8 +4,6 @@ from keras_cv.src.models.stable_diffusion.padded_conv2d import PaddedConv2D
 from cldm.diffuser import ResBlock, SpatialTransformer, Upsample
 from utils import ZeroPaddedConv2D
 
-from transformers import CLIPTextModel, CLIPTokenizer
-
 # The copied ControlNet
 class ControlNet(keras.Model):
     def __init__(
