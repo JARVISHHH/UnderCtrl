@@ -23,6 +23,11 @@ def main():
     else:
         dataset = facesynthetics.get_dataset()
 
+    # split dataset into train and test
+    train_size = int(len(dataset) * 0.8)
+    train_dataset = dataset.take(train_size)
+    test_dataset = dataset.skip(train_size)
+
     stable_diffusion = keras_cv.models.StableDiffusion(512, 512)
     control_net = ControlNet()
     controlled_unet = ControlledUnetModel()
@@ -34,7 +39,7 @@ def main():
         loss=tf.keras.losses.MeanAbsoluteError(),
     )
     for _ in range(args.epochs):
-        model.train_step(dataset)
+        model.train_step(train_dataset)
     
 if __name__ == '__main__':
     main()
