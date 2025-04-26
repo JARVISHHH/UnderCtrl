@@ -41,5 +41,12 @@ def main():
     for _ in range(args.epochs):
         model.train_step(train_dataset)
     
+    captions = [data['txt'] for data in dataset]
+    generated_images_sd, generated_images_controlnet = [], []
+    for caption in captions:
+        generated_images_sd.append(stable_diffusion.generate(caption))
+        generated_images_controlnet.append(model.apply_model(caption))
+    
+
 if __name__ == '__main__':
     main()

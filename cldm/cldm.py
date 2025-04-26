@@ -222,31 +222,48 @@ class ControlledUnetModel(keras.Model):
 class ControlLDM(keras.Model):
     def __init__(
         self,
+        stable_diffusion,
         control_net: ControlNet,
         controlled_unet: ControlledUnetModel,
         *kwargs
     ):
         super().__init__(**kwargs)
 
-        self.vae = keras_cv.models.stable_diffusion.vae.encoder()
+        self.stable_diffusion = stable_diffusion
+        self.vae = stable_diffusion.vae.encoder()
         self.control_net = control_net
         self.controlled_unet = controlled_unet
-        self.noise_scheduler = keras_cv.models.stable_diffusion.NoiseScheduler()
+        self.noise_scheduler = stable_diffusion.NoiseScheduler()
         self.loss_fn = tf.keras.losses.MeanSquaredError()
+        self.text_encoder = stable_diffusion.text_encoder
+        self.control_scales = [1.0] * 13
+    
+    def apply_model(self, input, timestep, *args, **kwargs):
+        diffusion_model = self.model.diffusion_model
+
+        caption = input['txt']
+
+        tokens = tf.keras.layers.TextVectorization(
+            max_tokens=max_length,
+            output_sequence_length=max_length,
+            standardize="lower_and_strip_punctuation",
+        )(caption)
+        context = self.stable_diffusion.text_encoder(tokens)
+
+        x = input['img']
+        hint = input['hint']
+
+        control = self.control_net(x=x, hint=hint, timesteps=timestep, context=context)
+        control = [c * scale for c, scale in zip(control, self.control_scales)]
+        images = diffusion_model(x=x, timesteps=timestep, context=context, control=hint)
+
+        return images
 
     def train_step(self, inputs):
         images = inputs["image"]
         captions = inputs["image_caption"]
         controls = inputs["image_seg"]
-        
-        tokens = self.tokenizer(
-            captions,
-            padding="max_length",
-            truncation=True,
-            max_length=77,
-            return_tensors="tf",
-        )
-        context = self.text_encoder(tokens.input_ids)[0]
+        context = self.text_encoder(captions)
 
         with tf.GradientTape() as tape:
             # Use VAE as the encoder
@@ -255,27 +272,33 @@ class ControlLDM(keras.Model):
             latents = latents * 0.18215
 
             batch_size = tf.shape(latents)[0]
-            timesteps = tf.random.uniform((batch_size,), minval=0, maxval=1000, dtype=tf.int32)
+            timesteps = tf.random.uniform(
+                (batch_size,), 0, self.noise_scheduler.train_timesteps, dtype=tf.int32
+            )
 
             noise = tf.random.normal(tf.shape(latents))
 
-            timesteps = np.random.randint(
-                0, self.noise_scheduler.train_timesteps, (batch_size,)
-            )
-
             # Add noise to the latents
             noisy_latents = self.noise_scheduler.add_noise(
-                tf.cast(latents, noise.dtype), noise, timesteps
+                latents, noise, timesteps
             )
 
-            timestep_embedding = tf.map_fn(
-                lambda t: self.get_timestep_embedding(t), timesteps, dtype=tf.float32
-            )
+            timestep_embedding = self.stable_diffusion._get_timestep_embedding(timesteps)
+
             timestep_embedding = tf.squeeze(timestep_embedding, 1)
             
-            control_outputs = self.control_net([noisy_latents, timestep_embedding, context, controls])
-            
-            unet_prediction = self.unet([noisy_latents, timestep_embedding, context], control=control_outputs)
+            control_outputs = self.control_net(
+                inputs=noisy_latents,
+                timestep=timestep_embedding,
+                context=context,
+                control_conditions=controls
+            )
+            unet_prediction = self.controlled_unet(
+                noisy_latents,
+                timestep_embedding,
+                context,
+                control=control_outputs
+            )
             
             loss = self.loss_fn(noise, unet_prediction)
 
