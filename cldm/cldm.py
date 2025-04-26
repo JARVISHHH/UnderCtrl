@@ -1,9 +1,14 @@
-import keras_cv
-from keras_cv.src.backend import keras
-from keras_cv.src.models.stable_diffusion.padded_conv2d import PaddedConv2D
+from tensorflow import keras
+from keras_cv.models.stable_diffusion import NoiseScheduler
+from keras_cv.models import StableDiffusion
 
 from cldm.diffuser import ResBlock, SpatialTransformer, Upsample
-from utils import ZeroPaddedConv2D
+from cldm.utils import timestep_embedding, PaddedConv2D, ZeroPaddedConv2D
+
+import tensorflow as tf
+import numpy as np
+
+MAX_PROMPT_LENGTH = 77
 
 # The copied ControlNet
 class ControlNet(keras.Model):
@@ -11,92 +16,128 @@ class ControlNet(keras.Model):
             self,
             img_height=512,
             img_width=512,
-            max_text_length=77,
             hint_image_size=(512, 512),
-            name=None,
             download_weights=True, 
         ):
 
-        # Inputs
-        context = keras.layers.Input((max_text_length, 768), name="context")
-        t_embed_input = keras.layers.Input((320,), name="timestep_embedding")
-        latent = keras.layers.Input(
-            (img_height // 8, img_width // 8, 4), name="latent"
-        )
-        hint = keras.layers.Input(hint_image_size, name="hint")
+        super().__init__()
 
         # Time embedding
-        t_emb = keras.layers.Dense(1280)(t_embed_input)
-        t_emb = keras.layers.Activation("swish")(t_emb)
-        t_emb = keras.layers.Dense(1280)(t_emb)
+        self.time_embedding_model = tf.keras.Sequential([
+            keras.layers.Input((320,), name="timestep_embedding"),
+            keras.layers.Dense(1280),
+            keras.layers.Activation("swish"),
+            keras.layers.Dense(1280),
+        ])
 
         # Compute hint embedding. See cldm/cldm.py Line 147.
-        guided_hint = PaddedConv2D(filters=16, kernel_size=3, strides=1, padding=1)(hint)
-        guided_hint = keras.layers.Activation("swish")(guided_hint)
-        guided_hint = PaddedConv2D(filters=16, kernel_size=3, strides=1, padding=1)(guided_hint)
-        guided_hint = keras.layers.Activation("swish")(guided_hint)
-        guided_hint = PaddedConv2D(filters=32, kernel_size=3, strides=2, padding=1)(guided_hint)
-        guided_hint = keras.layers.Activation("swish")(guided_hint)
-        guided_hint = PaddedConv2D(filters=32, kernel_size=3, strides=1, padding=1)(guided_hint)
-        guided_hint = keras.layers.Activation("swish")(guided_hint)
-        guided_hint = PaddedConv2D(filters=96, kernel_size=3, strides=2, padding=1)(guided_hint)
-        guided_hint = keras.layers.Activation("swish")(guided_hint)
-        guided_hint = PaddedConv2D(filters=96, kernel_size=3, strides=1, padding=1)(guided_hint)
-        guided_hint = keras.layers.Activation("swish")(guided_hint)
-        guided_hint = PaddedConv2D(filters=256, kernel_size=3, strides=2, padding=1)(guided_hint)
-        guided_hint = keras.layers.Activation("swish")(guided_hint)
-        guided_hint = ZeroPaddedConv2D(filters=320, kernel_size=3, strides=2, padding=1)(guided_hint)
+        self.hint_embedding_model = tf.keras.Sequential([
+            keras.layers.Input(hint_image_size, name="hint"),
+            PaddedConv2D(filters=16, kernel_size=3, strides=1, padding=1),
+            keras.layers.Activation("swish"),
+            PaddedConv2D(filters=16, kernel_size=3, strides=1, padding=1),
+            keras.layers.Activation("swish"),
+            PaddedConv2D(filters=32, kernel_size=3, strides=2, padding=1),
+            keras.layers.Activation("swish"),
+            PaddedConv2D(filters=32, kernel_size=3, strides=1, padding=1),
+            keras.layers.Activation("swish"),
+            PaddedConv2D(filters=96, kernel_size=3, strides=2, padding=1),
+            keras.layers.Activation("swish"),
+            PaddedConv2D(filters=96, kernel_size=3, strides=1, padding=1),
+            keras.layers.Activation("swish"),
+            PaddedConv2D(filters=256, kernel_size=3, strides=2, padding=1),
+            keras.layers.Activation("swish"),
+            ZeroPaddedConv2D(filters=320, kernel_size=3, strides=2, padding=1),
+        ])
 
-        # Final results with control
-        final_outputs = []
+        self.layers = [
+            keras.layers.Input((img_height // 8, img_width // 8, 4), name="latent"),
+            # Downsampling flow
+            PaddedConv2D(320, kernel_size=3, padding=1),
+            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0),  # Control
+            ### SD Encoder Block 1
+            ResBlock(320),
+            SpatialTransformer(8, 40, fully_connected=False),
+            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0),  # Control
+            ResBlock(320),
+            SpatialTransformer(8, 40, fully_connected=False),
+            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0),  # Control
+            PaddedConv2D(320, 3, strides=2, padding=1),
+            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0),  # Control
+            ### SD Encoder Block 2
+            ResBlock(640),
+            SpatialTransformer(8, 80, fully_connected=False),
+            ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0),  # Control
+            ResBlock(640),
+            SpatialTransformer(8, 80, fully_connected=False),
+            ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0),  # Control
+            PaddedConv2D(640, 3, strides=2, padding=1),
+            ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0),  # Control
+            ### SD Encoder Block 3
+            ResBlock(1280),
+            SpatialTransformer(8, 160, fully_connected=False),
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            ResBlock(1280),
+            SpatialTransformer(8, 160, fully_connected=False),
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            PaddedConv2D(1280, 3, strides=2, padding=1),
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            ### SD Encoder Block
+            ResBlock(1280),
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            ResBlock(1280),
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            # Middle flow
+            ResBlock(1280),
+            SpatialTransformer(8, 160, fully_connected=False),
+            ResBlock(1280),
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+        ]
+
+
+    def call(self, context, t_embed_input, latent, control):
+        t_emb = self.time_embedding_model(t_embed_input)
+        guided_hint = self.hint_embedding_model(control)
+
+        index = 0
+        final_output = []
 
         # Downsampling flow
-        outputs = []
-        x = PaddedConv2D(320, kernel_size=3, padding=1)(latent)
-        x += guided_hint
-        outputs.append(x)
-        final_outputs.append(ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0)(x))
-        ### SD Encoder Block 1   
+        x = self.layers[index](latent); index += 1; x += guided_hint
+        final_output.append(self.layers[index](x)); index += 1
+        ### SD Encoder Block 1
         for _ in range(2):
-            x = ResBlock(320)([x, t_emb])
-            x = SpatialTransformer(8, 40, fully_connected=False)([x, context])  # channels = 8 * 40
-            outputs.append(x)
-            final_outputs.append(ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0)(x))
-        x = PaddedConv2D(320, 3, strides=2, padding=1)(x)  # Downsample 2x
-        outputs.append(x)
-        final_outputs.append(ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0)(x))
+            x = self.layers[index]([x, t_emb]); index += 1
+            x = self.layers[index]([x, context]); index += 1
+            final_output.append(self.layers[index](x)); index += 1
+        x = self.layers[index](x); index += 1
+        final_output.append(self.layers[index](x)); index += 1
         ### SD Encoder Block 2
         for _ in range(2):
-            x = ResBlock(640)([x, t_emb])
-            x = SpatialTransformer(8, 80, fully_connected=False)([x, context])  # channels = 8 * 80
-            outputs.append(x)
-            final_outputs.append(ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0)(x))
-        x = PaddedConv2D(640, 3, strides=2, padding=1)(x)  # Downsample 2x
-        outputs.append(x)
-        final_outputs.append(ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0)(x))
+            x = self.layers[index]([x, t_emb]); index += 1
+            x = self.layers[index]([x, context]); index += 1
+            final_output.append(self.layers[index](x)); index += 1
+        x = self.layers[index](x); index += 1
+        final_output.append(self.layers[index](x)); index += 1
         ### SD Encoder Block 3
         for _ in range(2):
-            x = ResBlock(1280)([x, t_emb])
-            x = SpatialTransformer(8, 160, fully_connected=False)([x, context])  # channels = 8 * 160
-            outputs.append(x)
-            final_outputs.append(ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0)(x))
-        x = PaddedConv2D(1280, 3, strides=2, padding=1)(x)  # Downsample 2x
-        outputs.append(x)
-        final_outputs.append(ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0)(x))
+            x = self.layers[index]([x, t_emb]); index += 1
+            x = self.layers[index]([x, context]); index += 1
+            final_output.append(self.layers[index](x)); index += 1
+        x = self.layers[index](x); index += 1
+        final_output.append(self.layers[index](x)); index += 1
         ### SD Encoder Block
         for _ in range(2):
-            x = ResBlock(1280)([x, t_emb])
-            outputs.append(x)
-            final_outputs.append(ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0)(x))
+            x = self.layers[index]([x, t_emb]); index += 1
+            final_output.append(self.layers[index](x)); index += 1
 
         # Middle flow
-        x = ResBlock(1280)([x, t_emb])
-        x = SpatialTransformer(8, 160, fully_connected=False)([x, context])  # channels = 8 * 160
-        x = ResBlock(1280)([x, t_emb])
-        final_outputs.append(ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0)(x))
+        x = self.layers[index]([x, t_emb]); index += 1
+        x = self.layers[index]([x, context]); index += 1
+        x = self.layers[index]([x, t_emb]); index += 1
+        final_output.append(self.layers[index](x)); index += 1
 
-        super().__init__([latent, t_embed_input, context], final_outputs, name=name)
-
+        return final_output
 
 # The locked UNet
 class ControlledUnetModel(keras.Model):
@@ -104,111 +145,93 @@ class ControlledUnetModel(keras.Model):
         self,
         img_height=512,
         img_width=512,
-        max_text_length=77,
-        name=None,
-        control=None,
         download_weights=True, 
     ):
-        context = keras.layers.Input((max_text_length, 768), name="context")
-        t_embed_input = keras.layers.Input((320,), name="timestep_embedding")
-        latent = keras.layers.Input(
-            (img_height // 8, img_width // 8, 4), name="latent"
-        )
+        super().__init__()
 
-        t_emb = keras.layers.Dense(1280)(t_embed_input)
-        t_emb = keras.layers.Activation("swish")(t_emb)
-        t_emb = keras.layers.Dense(1280)(t_emb)
+        # Time embedding
+        self.time_embedding_model = tf.keras.Sequential([
+            keras.layers.Input((320,), name="timestep_embedding"),
+            keras.layers.Dense(1280),
+            keras.layers.Activation("swish"),
+            keras.layers.Dense(1280),
+        ])
 
-        # Downsampling flow
-        outputs = []
-        x = PaddedConv2D(320, kernel_size=3, padding=1)(latent)
-        outputs.append(x)
-        ### SD Encoder Block 1
-        for _ in range(2):
-            x = ResBlock(320)([x, t_emb])
-            x = SpatialTransformer(8, 40, fully_connected=False)([x, context])
-            outputs.append(x)
-        x = PaddedConv2D(320, 3, strides=2, padding=1)(x)  # Downsample 2x
-        outputs.append(x)
-        ### SD Encoder Block 2
-        for _ in range(2):
-            x = ResBlock(640)([x, t_emb])
-            x = SpatialTransformer(8, 80, fully_connected=False)([x, context])
-            outputs.append(x)
-        x = PaddedConv2D(640, 3, strides=2, padding=1)(x)  # Downsample 2x
-        outputs.append(x)
-        ### SD Encoder Block 3
-        for _ in range(2):
-            x = ResBlock(1280)([x, t_emb])
-            x = SpatialTransformer(8, 160, fully_connected=False)([x, context])
-            outputs.append(x)
-        x = PaddedConv2D(1280, 3, strides=2, padding=1)(x)  # Downsample 2x
-        outputs.append(x)
-        ### SD Encoder Block
-        for _ in range(2):
-            x = ResBlock(1280)([x, t_emb])
-            outputs.append(x)
-
-        # Middle flow
-        x = ResBlock(1280)([x, t_emb])
-        x = SpatialTransformer(8, 160, fully_connected=False)([x, context])
-        x = ResBlock(1280)([x, t_emb])
-
-        x += control.pop()
-
-        # Upsampling flow
-        self.trainable_layers = []
-        ### SD Decoder
-        for _ in range(3):
-            x = keras.layers.Concatenate()([x, outputs.pop() + control.pop()])
-            self.trainable_layers.append(x)
-            x = ResBlock(1280)([x, t_emb])
-            self.trainable_layers.append(x)
-        x = Upsample(1280)(x)
-        self.trainable_layers.append(x)
-        ### SD Decoder 3
-        for _ in range(3):
-            x = keras.layers.Concatenate()([x, outputs.pop() + control.pop()])
-            self.trainable_layers.append(x)
-            x = ResBlock(1280)([x, t_emb])
-            self.trainable_layers.append(x)
-            x = SpatialTransformer(8, 160, fully_connected=False)([x, context])
-            self.trainable_layers.append(x)
-        x = Upsample(1280)(x)
-        self.trainable_layers.append(x)
-        ### SD Decoder 2
-        for _ in range(3):
-            x = keras.layers.Concatenate()([x, outputs.pop() + control.pop()])
-            self.trainable_layers.append(x)
-            x = ResBlock(640)([x, t_emb])
-            self.trainable_layers.append(x)
-            x = SpatialTransformer(8, 80, fully_connected=False)([x, context])
-            self.trainable_layers.append(x)
-        x = Upsample(640)(x)
-        self.trainable_layers.append(x)
-        ### SD Decoder 1
-        for _ in range(3):
-            x = keras.layers.Concatenate()([x, outputs.pop() + control.pop()])
-            self.trainable_layers.append(x)
-            x = ResBlock(320)([x, t_emb])
-            self.trainable_layers.append(x)
-            x = SpatialTransformer(8, 40, fully_connected=False)([x, context])
-            self.trainable_layers.append(x)
-
-        # Exit flow
-        x = keras.layers.GroupNormalization(epsilon=1e-5)(x)
-        self.trainable_layers.append(x)
-        x = keras.layers.Activation("swish")(x)
-        self.trainable_layers.append(x)
-        output = PaddedConv2D(4, kernel_size=3, padding=1)(x)
-        self.trainable_layers.append(output)
-
-        for layer in self.layers:
-            layer.trainable = False
-        for layer in self.trainable_layers:
-            layer.trainable = True
-
-        super().__init__([latent, t_embed_input, context], output, name=name)
+        self.layers = [
+            keras.layers.Input((img_height // 8, img_width // 8, 4), name="latent"),
+            # Downsampling flow
+            PaddedConv2D(320, kernel_size=3, padding=1, trainable=False),
+            ### SD Encoder Block 1
+            ResBlock(320, trainable=False),
+            SpatialTransformer(8, 40, fully_connected=False, trainable=False),
+            ResBlock(320, trainable=False),
+            SpatialTransformer(8, 40, fully_connected=False, trainable=False),
+            PaddedConv2D(320, 3, strides=2, padding=1, trainable=False),
+            ### SD Encoder Block 2
+            ResBlock(640, trainable=False),
+            SpatialTransformer(8, 80, fully_connected=False, trainable=False),
+            ResBlock(640, trainable=False),
+            SpatialTransformer(8, 80, fully_connected=False, trainable=False),
+            PaddedConv2D(640, 3, strides=2, padding=1, trainable=False),
+            ### SD Encoder Block 3
+            ResBlock(1280, trainable=False),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
+            ResBlock(1280, trainable=False),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
+            PaddedConv2D(1280, 3, strides=2, padding=1, trainable=False),
+            ### SD Encoder Block
+            ResBlock(1280, trainable=False),
+            ResBlock(1280, trainable=False),
+            # Middle flow
+            ResBlock(1280, trainable=False),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
+            ResBlock(1280, trainable=False),
+            # Upsampling flow
+            ### SD Decoder
+            keras.layers.Concatenate(),
+            ResBlock(1280),
+            keras.layers.Concatenate(),
+            ResBlock(1280),
+            keras.layers.Concatenate(),
+            ResBlock(1280),
+            Upsample(1280),
+            ### SD Decoder 3
+            keras.layers.Concatenate(),
+            ResBlock(1280),
+            SpatialTransformer(8, 160, fully_connected=False),
+            keras.layers.Concatenate(),
+            ResBlock(1280),
+            SpatialTransformer(8, 160, fully_connected=False),
+            keras.layers.Concatenate(),
+            ResBlock(1280),
+            SpatialTransformer(8, 160, fully_connected=False),
+            Upsample(1280),
+            ### SD Decoder 2
+            keras.layers.Concatenate(),
+            ResBlock(640),
+            SpatialTransformer(8, 80, fully_connected=False),
+            keras.layers.Concatenate(),
+            ResBlock(640),
+            SpatialTransformer(8, 80, fully_connected=False),
+            keras.layers.Concatenate(),
+            ResBlock(640),
+            SpatialTransformer(8, 80, fully_connected=False),
+            Upsample(640),
+            ### SD Decoder 1
+            keras.layers.Concatenate(),
+            ResBlock(320),
+            SpatialTransformer(8, 40, fully_connected=False),
+            keras.layers.Concatenate(),
+            ResBlock(320),
+            SpatialTransformer(8, 40, fully_connected=False),
+            keras.layers.Concatenate(),
+            ResBlock(320),
+            SpatialTransformer(8, 40, fully_connected=False),
+            # Exit flow
+            keras.layers.GroupNormalization(epsilon=1e-5),
+            keras.layers.Activation("swish"),
+            PaddedConv2D(4, kernel_size=3, padding=1)
+        ]
 
         # if download_weights:
         #     diffusion_model_weights_fpath = keras.utils.get_file(
@@ -217,94 +240,168 @@ class ControlledUnetModel(keras.Model):
         #     )
         #     self.load_weights(diffusion_model_weights_fpath)
 
+    def call(self, context, t_embed_input, latent, control):
+        t_emb = self.time_embedding_model(t_embed_input)
 
-# Wrapper
-class ControlLDM(keras.Model):
+        index = 0
+        output = []
+
+        # Downsampling flow
+        x = self.layers[index](latent); index += 1
+        output.append(x)
+        ### SD Encoder Block 1
+        for _ in range(2):
+            x = self.layers[index]([x, t_emb]); index += 1
+            x = self.layers[index]([x, context]); index += 1
+            output.append(x)
+        x = self.layers[index](x); index += 1
+        output.append(x)
+        ### SD Encoder Block 2
+        for _ in range(2):
+            x = self.layers[index]([x, t_emb]); index += 1
+            x = self.layers[index]([x, context]); index += 1
+            output.append(x)
+        x = self.layers[index](x); index += 1
+        output.append(x)
+        ### SD Encoder Block 3
+        for _ in range(2):
+            x = self.layers[index]([x, t_emb]); index += 1
+            x = self.layers[index]([x, context]); index += 1
+            output.append(x)
+        x = self.layers[index](x); index += 1
+        output.append(x)
+        ### SD Encoder Block
+        for _ in range(2):
+            x = self.layers[index]([x, t_emb]); index += 1
+            output.append(x)
+
+        # Middle flow
+        x = self.layers[index]([x, t_emb]); index += 1
+        x = self.layers[index]([x, context]); index += 1
+        x = self.layers[index]([x, t_emb]); index += 1
+
+        x += control.pop()
+
+        # Upsampling flow
+        ### SD Decoder
+        for _ in range(3):
+            x = self.layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.layers[index]([x, t_emb]); index += 1
+        x = self.layers[index](x); index += 1
+        ### SD Decoder 3
+        for _ in range(3):
+            x = self.layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.layers[index]([x, t_emb]); index += 1
+            x = self.layers[index]([x, context]); index += 1
+        x = self.layers[index](x); index += 1
+        ### SD Decoder 2
+        for _ in range(3):
+            x = self.layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.layers[index]([x, t_emb]); index += 1
+            x = self.layers[index]([x, context]); index += 1
+        x = self.layers[index](x); index += 1
+        ### SD Decoder 1
+        for _ in range(3):
+            x = self.layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.layers[index]([x, t_emb]); index += 1
+            x = self.layers[index]([x, context]); index += 1
+
+        # Exit flow
+        x = self.layers[index](x); index += 1
+        x = self.layers[index](x); index += 1
+        x = self.layers[index](x); index += 1
+
+        return x
+        
+
+class ControlSDB(StableDiffusion):
     def __init__(
         self,
-        stable_diffusion,
-        control_net: ControlNet,
-        controlled_unet: ControlledUnetModel,
-        *kwargs
+        img_height=512,
+        img_width=512,
+        jit_compile=True,
     ):
-        super().__init__(**kwargs)
+        super().__init__(img_height, img_width, jit_compile)
 
-        self.stable_diffusion = stable_diffusion
-        self.vae = stable_diffusion.vae.encoder()
-        self.control_net = control_net
-        self.controlled_unet = controlled_unet
-        self.noise_scheduler = stable_diffusion.NoiseScheduler()
-        self.loss_fn = tf.keras.losses.MeanSquaredError()
-        self.text_encoder = stable_diffusion.text_encoder
+        self.noise_scheduler = NoiseScheduler()
+
+        self.control_model = ControlNet(img_height, img_width)
         self.control_scales = [1.0] * 13
-    
-    def apply_model(self, input, timestep, *args, **kwargs):
-        diffusion_model = self.model.diffusion_model
-
-        caption = input['txt']
-
-        tokens = tf.keras.layers.TextVectorization(
-            max_tokens=max_length,
-            output_sequence_length=max_length,
-            standardize="lower_and_strip_punctuation",
-        )(caption)
-        context = self.stable_diffusion.text_encoder(tokens)
-
-        x = input['img']
-        hint = input['hint']
-
-        control = self.control_net(x=x, hint=hint, timesteps=timestep, context=context)
-        control = [c * scale for c, scale in zip(control, self.control_scales)]
-        images = diffusion_model(x=x, timesteps=timestep, context=context, control=hint)
-
-        return images
 
     def train_step(self, inputs):
-        images = inputs["image"]
-        captions = inputs["image_caption"]
-        controls = inputs["image_seg"]
-        context = self.text_encoder(captions)
+        latents, encoded_text, controls = self.get_input(inputs)
+        batch_size = tf.shape(latents)[0]
 
         with tf.GradientTape() as tape:
-            # Use VAE as the encoder
-            latents = self.vae.encode(images)[0]
-            # Magic number: https://keras.io/examples/generative/fine_tune_via_textual_inversion/
-            latents = latents * 0.18215
-
-            batch_size = tf.shape(latents)[0]
-            timesteps = tf.random.uniform(
-                (batch_size,), 0, self.noise_scheduler.train_timesteps, dtype=tf.int32
-            )
-
-            noise = tf.random.normal(tf.shape(latents))
-
-            # Add noise to the latents
+            noise = tf.random.normal(shape=tf.shape(latents), dtype=latents.dtype)
+            timesteps = np.random.randint(0, self.noise_scheduler.train_timesteps, (batch_size,))
             noisy_latents = self.noise_scheduler.add_noise(
                 latents, noise, timesteps
             )
+            target = noise
 
-            timestep_embedding = self.stable_diffusion._get_timestep_embedding(timesteps)
+            # Check this
+            timestep_embedding_not_trainnable = tf.no_gradient(timestep_embedding(timesteps))
+            timestep_embedding_trainnable = timestep_embedding(timesteps)
 
-            timestep_embedding = tf.squeeze(timestep_embedding, 1)
-            
-            control_outputs = self.control_net(
-                inputs=noisy_latents,
-                timestep=timestep_embedding,
-                context=context,
-                control_conditions=controls
-            )
-            unet_prediction = self.controlled_unet(
-                noisy_latents,
-                timestep_embedding,
-                context,
-                control=control_outputs
-            )
-            
-            loss = self.loss_fn(noise, unet_prediction)
+            control = self.control_model(encoded_text, timestep_embedding_trainnable, noisy_latents, controls)
+            control = [c * scale for c, scale in zip(control, self.control_scales)]
+            eps = self.diffusion_model(encoded_text, timestep_embedding_not_trainnable, noisy_latents)
 
-        # Update parameters of the diffusion model.
-        trainable_vars = self.controlled_unet.trainable_variables + self.control_net.trainable_variables
+            loss = self.compiled_loss(target, eps)
+        
+        trainable_vars = self.control_model.trainable_variables + self.diffusion_model.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
+        gradients = [tf.clip_by_norm(g, self.max_grad_norm) for g in gradients]
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
 
         return { 'loss': loss }
+
+
+    def predict(self, inputs, num_inference_steps=50):
+        latents, encoded_text, control = self.get_input(inputs)
+        batch_size = tf.shape(latents)[0]
+        
+        noisy_latents = tf.random.normal(shape=tf.shape(latents), dtype=latents.dtype)
+
+        for step in range(num_inference_steps):
+            timestep = tf.fill([batch_size], self.noise_scheduler.inference_timesteps[step])
+            timestep_emb = timestep_embedding(timestep)
+            
+            control = self.control_model(encoded_text, timestep_emb, noisy_latents, control)
+            control = [c * scale for c, scale in zip(control, self.control_scales)]
+
+            pred_noise = self._diffusion_model(encoded_text, timestep_emb, noisy_latents, control)
+
+            noisy_latents = self.noise_scheduler.step(pred_noise, timestep, noisy_latents)
+
+        decoded = self.vae.decoder(noisy_latents)
+        return decoded
+
+    def get_input(self, inputs):
+        # TODO: should images be rearranged? from (b h w c) to (b c h w)?
+        # jpg refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/ldm/models/diffusion/ddpm.py#L419
+        images = inputs["jpg"]
+        latents = self.image_encoder(images)
+        # condition/prompt/txt refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/ldm/models/diffusion/ddpm.py#L767
+        captions = inputs["txt"]
+        # TODO: use FrozenCLIPEmbedder, is encode_text the same as FrozenCLIPEmbedder?
+        encoded_text = self.encode_text(captions)
+        # control refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/cldm/cldm.py#L318
+        controls = inputs["hint"]
+
+        return latents, encoded_text, controls
+    
+    @property
+    def diffusion_model(self):
+        """diffusion_model returns the diffusion model with pretrained weights.
+        Can be overriden for tasks where the diffusion model needs to be
+        modified.
+        """
+        if self._diffusion_model is None:
+            self._diffusion_model = ControlledUnetModel(
+                self.img_height, self.img_width, MAX_PROMPT_LENGTH
+            )
+            # if self.jit_compile:
+            #     self._diffusion_model.compile(jit_compile=True)
+        return self._diffusion_model

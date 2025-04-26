@@ -1,15 +1,22 @@
 import argparse
-import tensorflow as tf 
-from cldm import ControlNet, ControlledUnetModel, ControlLDM
+import tensorflow as tf
+from cldm.cldm import ControlSDB
 import keras_cv
-from keras_cv.models.stable_diffusion.diffusion_model import DiffusionModel
-from test_imgs import fill50k, facesynthetics
+from keras_cv.models import StableDiffusion
+import numpy as np
+from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
+from tensorflow.keras.applications.inception_v3 import decode_predictions
+from tensorflow.keras.models import Model
+import tensorflow_probability as tfp
+
+inception_model = InceptionV3(include_top=False, weights='imagenet', pooling='avg')
+clip_model = keras_cv.models.ClipModel.from_preset("clip_vit_b32", dtype="float32")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train and Test ControlNet")
     parser.add_argument('--mode', choices=['train', 'test'], required=True, help='Mode: train or test')
     parser.add_argument('--dataset', type=str, default='fill50k', choices=['fill50k', 'facesynthetics'])
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--epochs', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--save_dir', type=str, default='./checkpoints')
@@ -19,34 +26,98 @@ def main():
     args = parse_args()
 
     if args.dataset == 'fill50k':
+        from test_imgs import fill50k
         dataset = fill50k.get_dataset()
+        dataset_length = 50000
     else:
+        from test_imgs import facesynthetics
         dataset = facesynthetics.get_dataset()
+        dataset_length = 50000  # TODO
 
     # split dataset into train and test
-    train_size = int(len(dataset) * 0.8)
+    train_size = int(dataset_length * 0.8)
     train_dataset = dataset.take(train_size)
     test_dataset = dataset.skip(train_size)
 
-    stable_diffusion = keras_cv.models.StableDiffusion(512, 512)
-    control_net = ControlNet()
-    controlled_unet = ControlledUnetModel()
-    model = ControlLDM(stable_diffusion, control_net, controlled_unet)
+    model = ControlSDB()
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=args.lr)
     model.compile(
         optimizer=optimizer,
-        loss=tf.keras.losses.MeanAbsoluteError(),
+        loss="mse",
     )
-    for _ in range(args.epochs):
-        model.train_step(train_dataset)
+    model.fit(train_dataset, epochs=args.epochs)
     
-    captions = [data['txt'] for data in dataset]
-    generated_images_sd, generated_images_controlnet = [], []
+    captions = [data['txt'] for data in test_dataset]
+    generated_images_sd = []
+    stable_diffusion = StableDiffusion(img_width=512, img_height=512)
+
     for caption in captions:
-        generated_images_sd.append(stable_diffusion.generate(caption))
-        generated_images_controlnet.append(model.apply_model(caption))
+        generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=3))
+
+    generated_images_controlnet = model.predict(test_dataset)
+
+    clip_score_sd = calculate_clip_score(generated_images_sd, captions)
+    clip_score_controlnet = calculate_clip_score(generated_images_controlnet, captions)
+    print("CLIP Score:")
+    print("Stable Diffusion: " + str(clip_score_sd))
+    print("Control Net: " + str(clip_score_controlnet))
+
+    real_images = [data['jpg'] for data in test_dataset]
+    fid_score_sd = calculate_fid_score(real_images, generated_images_sd)
+    fid_score_controlnet = calculate_fid_score(real_images, generated_images_controlnet)
+    print("FID Score:")
+    print("Stable Diffusion: " + str(fid_score_sd))
+    print("Control Net: " + str(fid_score_controlnet))
+
+
+def calculate_clip_score(images, captions):
+    images = (images + 1.0) / 2.0 # assuming vae.decoder returns values between -1.0 and 1.0
+    images = tf.clip_by_value(images, 0.0, 1.0)
+
+    image_embeddings = clip_model.encode_image(images)
+    text_embeddings = clip_model.encode_text(captions)
+
+    # Normalize embeddings
+    image_embeddings = tf.math.l2_normalize(image_embeddings, axis=1)
+    text_embeddings = tf.math.l2_normalize(text_embeddings, axis=1)
+
+    similarity = tf.reduce_sum(image_embeddings * text_embeddings, axis=1)
+
+    return tf.reduce_mean(similarity).numpy().item()
     
+def get_activations(images: tf.Tensor, batch_size=32):
+    # Assuming InceptionV3 accepts 299x299 images
+    images_resized = tf.image.resize(images, (299, 299))
+    # Assuming images are within [-1, 1]
+    images_preprocessed = preprocess_input(images_resized * 255.0)
+
+    activations = inception_model(images_preprocessed, training=False)
+    return activations
+
+def calculate_fid_score(real_images, generated_images):
+    # d^2 = ||mu_1 – mu_2||^2 + Tr(c_1 + c_2 – 2*sqrt(c_1*c_2))
+    act_1 = get_activations(real_images)
+    act_2 = get_activations(generated_images)
+
+    # Mean and covariance
+    mu_1 = tf.reduce_mean(act_1, axis=0)
+    mu_2 = tf.reduce_mean(act_2, axis=0)
+
+    c_1 = tfp.stats.covariance(act_1)
+    c_2 = tfp.stats.covariance(act_2)
+
+    sqrt_c_1_mult_c_2 = tf.linalg.sqrtm(tf.matmul(c_1, c_2))
+
+    # Handle nan, complex numbers and infinity
+    if tf.math.reduce_any(tf.math.is_nan(sqrt_c_1_mult_c_2)) or tf.math.reduce_any(tf.math.is_inf(sqrt_c_1_mult_c_2)):
+        sqrt_c_1_mult_c_2 = tf.cast(tf.linalg.sqrtm(tf.cast(c_1 @ c_2, tf.complex64)), tf.float32)
+
+    if tf.math.reduce_any(tf.math.is_complex(sqrt_c_1_mult_c_2)):
+        sqrt_c_1_mult_c_2 = tf.math.real(sqrt_c_1_mult_c_2)
+
+    fid = tf.reduce_sum(tf.square(mu_1 - mu_2)) + tf.linalg.trace(c_1 + c_2 - 2.0 * sqrt_c_1_mult_c_2)
+    return fid.numpy().item()
 
 if __name__ == '__main__':
     main()
