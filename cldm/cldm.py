@@ -1,6 +1,5 @@
 from tensorflow import keras
-from keras_cv.models.stable_diffusion import NoiseScheduler
-from keras_cv.models import StableDiffusion
+import keras_cv
 
 from cldm.diffuser import ResBlock, SpatialTransformer, Upsample
 from cldm.utils import timestep_embedding, PaddedConv2D, ZeroPaddedConv2D
@@ -314,7 +313,7 @@ class ControlledUnetModel(keras.Model):
         return x
         
 
-class ControlSDB(StableDiffusion):
+class ControlSDB(keras_cv.models.StableDiffusion):
     def __init__(
         self,
         img_height=512,
@@ -323,7 +322,7 @@ class ControlSDB(StableDiffusion):
     ):
         super().__init__(img_height, img_width, jit_compile)
 
-        self.noise_scheduler = NoiseScheduler()
+        self.noise_scheduler = keras_cv.models.stable_diffusion.NoiseScheduler()
 
         self.control_model = ControlNet(img_height, img_width)
         self.control_scales = [1.0] * 13

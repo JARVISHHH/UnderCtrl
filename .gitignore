@@ -2,3 +2,4 @@
 training/
 test_imgs/__pycache__
 cldm/__pycache__
+__pycache__
