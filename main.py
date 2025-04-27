@@ -2,11 +2,12 @@ import argparse
 import tensorflow as tf
 from cldm.cldm import ControlSDB
 import keras_cv
-from keras_cv.models import StableDiffusion
 import numpy as np
 from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
 import tensorflow_probability as tfp
 from transformers import TFCLIPModel, CLIPProcessor
+
+import matplotlib.pyplot as plt
 
 inception_model = InceptionV3(include_top=False, weights='imagenet', pooling='avg')
 clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
@@ -19,6 +20,7 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--save_dir', type=str, default='./checkpoints')
+    parser.add_argument('--img_size', type=int, default=64)
     return parser.parse_args()
 
 def main():
@@ -26,27 +28,41 @@ def main():
 
     if args.dataset == 'fill50k':
         from test_imgs import fill50k
-        dataset = fill50k.get_dataset()
+        dataset = fill50k.get_dataset(args.batch_size, args.img_size)
         dataset_length = 50000
     else:
         from test_imgs import facesynthetics
-        dataset = facesynthetics.get_dataset()
+        dataset = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
         dataset_length = 50000  # TODO
 
     # split dataset into train and test
-    train_size = int(dataset_length * 0.8)
+    train_size = int(dataset_length * 0.08)
     train_dataset = dataset.take(train_size)
     test_dataset = dataset.skip(train_size)
 
-    model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr))
+    model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
+
+    print("----------Start Training----------")
+
+    losses = []
 
     for _ in range(args.epochs):
         for batch in train_dataset.take(1):
-            model.train_step(batch)
+            losses.append(model.train_step(batch)['loss'])
     
+    print("----------Finish Training----------")
+
+    epochs = list(range(1, len(losses) + 1))
+    plt.plot(epochs, losses, label='Loss')
+    plt.title('Training Loss over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.show()
+
     captions = [data['txt'] for data in test_dataset]
     generated_images_sd = []
-    stable_diffusion = StableDiffusion(img_width=512, img_height=512)
+    stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=rgs.img_size)
 
     for caption in captions:
         generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=3))
