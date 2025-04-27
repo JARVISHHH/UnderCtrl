@@ -2,7 +2,7 @@ from keras_cv.src.backend import keras
 
 import tensorflow as tf
 
-def timestep_embedding(timestep, dim=320, max_period=10000):
+def timestep_embedding(timesteps, dim=320, max_period=10000):
     """
     Create sinusoidal timestep embeddings.
     :param timesteps: a 1-D Tensor of N indices, one per batch element.
@@ -16,9 +16,8 @@ def timestep_embedding(timestep, dim=320, max_period=10000):
     freqs = tf.math.exp(
         -log_max_period * tf.range(0, half, dtype=tf.float32) / half
     )
-    args = tf.convert_to_tensor([timestep], dtype=tf.float32) * freqs
-    embedding = tf.concat([tf.math.cos(args), tf.math.sin(args)], 0)
-    embedding = tf.reshape(embedding, [1, -1])
+    args = tf.reshape(tf.cast(timesteps, tf.float32), [-1, 1])* freqs
+    embedding = tf.concat([tf.math.cos(args), tf.math.sin(args)], -1)
     return embedding
 
 class PaddedConv2D(keras.layers.Layer):

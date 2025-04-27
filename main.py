@@ -5,16 +5,15 @@ import keras_cv
 from keras_cv.models import StableDiffusion
 import numpy as np
 from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
-from tensorflow.keras.applications.inception_v3 import decode_predictions
-from tensorflow.keras.models import Model
 import tensorflow_probability as tfp
+from transformers import TFCLIPModel, CLIPProcessor
 
 inception_model = InceptionV3(include_top=False, weights='imagenet', pooling='avg')
-clip_model = keras_cv.models.ClipModel.from_preset("clip_vit_b32", dtype="float32")
+clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+clip_model = TFCLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train and Test ControlNet")
-    parser.add_argument('--mode', choices=['train', 'test'], required=True, help='Mode: train or test')
     parser.add_argument('--dataset', type=str, default='fill50k', choices=['fill50k', 'facesynthetics'])
     parser.add_argument('--epochs', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=8)
@@ -39,14 +38,11 @@ def main():
     train_dataset = dataset.take(train_size)
     test_dataset = dataset.skip(train_size)
 
-    model = ControlSDB()
+    model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr))
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=args.lr)
-    model.compile(
-        optimizer=optimizer,
-        loss="mse",
-    )
-    model.fit(train_dataset, epochs=args.epochs)
+    for _ in range(args.epochs):
+        for batch in train_dataset.take(1):
+            model.train_step(batch)
     
     captions = [data['txt'] for data in test_dataset]
     generated_images_sd = []
@@ -72,11 +68,18 @@ def main():
 
 
 def calculate_clip_score(images, captions):
-    images = (images + 1.0) / 2.0 # assuming vae.decoder returns values between -1.0 and 1.0
-    images = tf.clip_by_value(images, 0.0, 1.0)
+    inputs = clip_tokenizer(
+        text=captions,
+        images=images,
+        return_tensors="tf",  # Return TensorFlow tensors
+        padding=True,
+        truncation=True
+    )
 
-    image_embeddings = clip_model.encode_image(images)
-    text_embeddings = clip_model.encode_text(captions)
+    outputs = clip_model(**inputs)
+
+    image_embeddings = outputs.image_embeds
+    text_embeddings = outputs.text_embeds
 
     # Normalize embeddings
     image_embeddings = tf.math.l2_normalize(image_embeddings, axis=1)
