@@ -42,14 +42,12 @@ def main():
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
 
-    print("----------Start Training----------")
-
     losses = []
-
+    
+    print("----------Start Training----------")
     for _ in range(args.epochs):
         for batch in train_dataset.take(1):
             losses.append(model.train_step(batch)['loss'])
-    
     print("----------Finish Training----------")
 
     epochs = list(range(1, len(losses) + 1))
@@ -62,10 +60,10 @@ def main():
 
     captions = [data['txt'] for data in test_dataset]
     generated_images_sd = []
-    stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=rgs.img_size)
+    stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
 
     for caption in captions:
-        generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=3))
+        generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=args.batch_size))
 
     generated_images_controlnet = model.predict(test_dataset)
 
