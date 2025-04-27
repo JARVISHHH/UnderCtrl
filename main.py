@@ -2,10 +2,12 @@ import argparse
 import tensorflow as tf
 from cldm.cldm import ControlSDB
 import keras_cv
+import keras
 import numpy as np
 from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
 import tensorflow_probability as tfp
 from transformers import TFCLIPModel, CLIPProcessor
+import os
 
 import matplotlib.pyplot as plt
 
@@ -20,11 +22,15 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--save_dir', type=str, default='./checkpoints')
-    parser.add_argument('--img_size', type=int, default=256)
+    parser.add_argument('--img_size', type=int, default=128)
+    parser.add_argument('--resume', action='store_true', help='Resume training from last checkpoint')
+    parser.add_argument('--test', action='store_true', help='Test the model')
     return parser.parse_args()
 
 def main():
     args = parse_args()
+
+    os.makedirs(args.save_dir, exist_ok=True) # if exists, do nothing
 
     if args.dataset == 'fill50k':
         from test_imgs import fill50k
@@ -36,18 +42,53 @@ def main():
         dataset_length = 50000  # TODO
 
     # split dataset into train and test
-    train_size = int(dataset_length * 0.08)
+    train_size = int(dataset_length * 0.8)
     train_dataset = dataset.take(train_size)
     test_dataset = dataset.skip(train_size)
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
 
-    losses = []
-    
+    # build model
+    dummy_input_shape = (args.batch_size, args.img_size, args.img_size, 3)
+    model.build(dummy_input_shape)
+
+    # load weights if available
+    if args.resume:
+        print("Loading weights...")
+        try:
+            model.control_model.load_weights(f"{args.save_dir}/controlnet.weights.h5")
+            model.diffuser.load_weights(f"{args.save_dir}/unet.weights.h5")
+            print("Loaded weights successfully.")
+        except Exception as e:
+            print("Failed to load weights:", e)
+    else:
+        print("Loading original weights...")
+        try:
+            file = keras.utils.get_file(
+                                    origin="https://huggingface.co/fchollet/stable-diffusion/resolve/main/kcv_diffusion_model.h5",  # noqa: E501
+                                    file_hash="8799ff9763de13d7f30a683d653018e114ed24a6a819667da4f5ee10f9e805fe",  # noqa: E501
+            )
+            model.control_model.load_weights(file, by_name=True, skip_mismatch=True)
+            model.diffuser.load_weights(file, by_name=True, skip_mismatch=True)
+            print("Loaded weights successfully.")
+        except Exception as e:
+            print("Failed to load weights:", e)
+            print("Train from scratch.")
+
+
     print("----------Start Training----------")
-    for _ in range(args.epochs):
+
+    losses = []
+
+    for epoch in range(args.epochs):
         for batch in train_dataset.take(1):
             losses.append(model.train_step(batch)['loss'])
+        try:
+            model.control_model.save_weights(f"{args.save_dir}/controlnet.weights.h5")
+            model.diffusion_model.save_weights(f"{args.save_dir}/unet.weights.h5")
+        except Exception as e:
+            print("Failed to save weights:", e)
+    
     print("----------Finish Training----------")
 
     epochs = list(range(1, len(losses) + 1))
@@ -55,8 +96,12 @@ def main():
     plt.title('Training Loss over Epochs')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
-    plt.legend()
-    plt.show()
+    plt.savefig(f"{args.save_dir}/loss_curve.png")
+    plt.clf()
+    plt.cla()
+    plt.close('all')
+
+    print("----------Image Saved----------")
 
     # captions = [data['txt'] for data in test_dataset]
     captions = []

@@ -313,27 +313,42 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         self.noise_scheduler = keras_cv.models.stable_diffusion.NoiseScheduler()
         self.max_grad_norm = 1.0
 
-        file = keras.utils.get_file(
-                                    origin="https://huggingface.co/fchollet/stable-diffusion/resolve/main/kcv_diffusion_model.h5",  # noqa: E501
-                                    file_hash="8799ff9763de13d7f30a683d653018e114ed24a6a819667da4f5ee10f9e805fe",  # noqa: E501
-        )
-        dummy_encoded_text = tf.random.normal((1, MAX_PROMPT_LENGTH, 768))
-        dummy_timestep_embedding = tf.random.normal((1, 320))
-        dummy_latent = tf.random.normal((1, img_height // 8, img_width // 8, 4))
-        dummy_hint = tf.random.normal((1, img_height, img_width, 3))
-
         self.control_model = ControlNet(img_height, img_width)
-        dummy_control = self.control_model([dummy_encoded_text, dummy_timestep_embedding, dummy_latent, dummy_hint])
-        self.control_model.summary()
-        self.control_model.load_weights(file, by_name=True, skip_mismatch=True)
         self.control_scales = [1.0] * 13
 
         self.diffuser = ControlledUnetModel()
-        self.diffuser([dummy_encoded_text, dummy_timestep_embedding, dummy_latent, dummy_control]) 
-        self.diffuser.summary()
-        self.diffuser.load_weights(file, by_name=True, skip_mismatch=True)
 
         self.optimizer = optimizer
+
+
+    def build(self, input_shape):
+        batch_size = input_shape[0] if input_shape[0] is not None else 1
+        img_height = input_shape[1]
+        img_width = input_shape[2]
+
+        # Prepare dummy inputs manually
+        latent_shape = (batch_size, img_height // 8, img_width // 8, 4)
+        latents = tf.zeros(latent_shape, dtype=tf.float32)
+
+        context_shape = (batch_size, MAX_PROMPT_LENGTH, 768) # TODO
+        dummy_context = tf.zeros(context_shape, dtype=tf.float32)
+
+        timestep_shape = (batch_size,)
+        dummy_timesteps = tf.zeros(timestep_shape, dtype=tf.int32)
+        timestep_emb = timestep_embedding(dummy_timesteps)
+
+        control_shape = (batch_size, img_height, img_width, 3)
+        controls = tf.zeros(control_shape, dtype=tf.float32)
+
+        # Build control model
+        control_outputs = self.control_model([dummy_context, timestep_emb, latents, controls])
+        control_outputs = [c * scale for c, scale in zip(control_outputs, self.control_scales)]
+
+        # Build diffusion model
+        _ = self.diffuser([dummy_context, timestep_emb, latents, control_outputs])
+
+        self.control_model.summary()
+        self.diffuser.summary()
 
     def train_step(self, inputs):
         latents, encoded_text, controls = self.get_input(inputs)
@@ -351,7 +366,10 @@ class ControlSDB(keras_cv.models.StableDiffusion):
             timestep_embedding_not_trainnable = tf.stop_gradient(timestep_embedding(timesteps))
             timestep_embedding_trainnable = timestep_embedding(timesteps)
 
-            encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
+            if isinstance(encoded_text, list):
+                encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
+            else:
+                encoded_text = tf.convert_to_tensor(encoded_text)
             
             control = self.control_model([encoded_text, timestep_embedding_trainnable, noisy_latents, controls])
             control = [c * scale for c, scale in zip(control, self.control_scales)]
@@ -382,7 +400,10 @@ class ControlSDB(keras_cv.models.StableDiffusion):
             timestep = tf.fill([batch_size], self.noise_scheduler.inference_timesteps[step])
             timestep_emb = timestep_embedding(timestep)
             
-            encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
+            if isinstance(encoded_text, list):
+                encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
+            else:
+                encoded_text = tf.convert_to_tensor(encoded_text)
 
             control = self.control_model([encoded_text, timestep_emb, noisy_latents, control])
             control = [c * scale for c, scale in zip(control, self.control_scales)]
