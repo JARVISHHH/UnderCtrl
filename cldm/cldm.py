@@ -13,9 +13,6 @@ MAX_PROMPT_LENGTH = 77
 class ControlNet(keras.Model):
     def __init__(
             self,
-            img_height=512,
-            img_width=512,
-            hint_image_size=(512, 512, 3),
             download_weights=True, 
         ):
 
@@ -23,7 +20,7 @@ class ControlNet(keras.Model):
 
         # Time embedding
         self.time_embedding_model = tf.keras.Sequential([
-            keras.layers.Input((320,), name="timestep_embedding"),
+            # keras.layers.Input((320,), name="timestep_embedding"),
             keras.layers.Dense(1280),
             keras.layers.Activation("swish"),
             keras.layers.Dense(1280),
@@ -31,7 +28,7 @@ class ControlNet(keras.Model):
 
         # Compute hint embedding. See cldm/cldm.py Line 147.
         self.hint_embedding_model = tf.keras.Sequential([
-            keras.layers.Input(hint_image_size, name="hint"),
+            # keras.layers.Input(hint_image_size, name="hint"),
             PaddedConv2D(filters=16, kernel_size=3, strides=1, padding=1),
             keras.layers.Activation("swish"),
             PaddedConv2D(filters=16, kernel_size=3, strides=1, padding=1),
@@ -46,8 +43,7 @@ class ControlNet(keras.Model):
             keras.layers.Activation("swish"),
             PaddedConv2D(filters=256, kernel_size=3, strides=2, padding=1),
             keras.layers.Activation("swish"),
-            ZeroPaddedConv2D(filters=320, kernel_size=3, strides=2, padding=1),
-            keras.layers.UpSampling2D(size=(2, 2), interpolation='bilinear'),
+            ZeroPaddedConv2D(filters=320, kernel_size=3, strides=1, padding=1),
         ])
 
         # self.layers is a reserved field
@@ -96,10 +92,10 @@ class ControlNet(keras.Model):
         ]
 
 
-    def call(self, context, t_embed_input, latent, control):
+    def __call__(self, context, t_embed_input, latent, control):
         t_emb = self.time_embedding_model(t_embed_input)
         guided_hint = self.hint_embedding_model(control)
-        context = tf.concat(context, axis=1)
+        context = tf.stack(tf.squeeze(context, axis=1), axis=0)
 
         index = 0
         final_output = []
@@ -145,22 +141,18 @@ class ControlNet(keras.Model):
 class ControlledUnetModel(keras.Model):
     def __init__(
         self,
-        img_height=512,
-        img_width=512,
         download_weights=True, 
     ):
         super().__init__()
 
         # Time embedding
         self.time_embedding_model = tf.keras.Sequential([
-            keras.layers.Input((320,), name="timestep_embedding"),
             keras.layers.Dense(1280),
             keras.layers.Activation("swish"),
             keras.layers.Dense(1280),
         ])
 
-        self.layers = [
-            keras.layers.Input((img_height // 8, img_width // 8, 4), name="latent"),
+        self.unet_layers = [
             # Downsampling flow
             PaddedConv2D(320, kernel_size=3, padding=1, trainable=False),
             ### SD Encoder Block 1
@@ -242,76 +234,77 @@ class ControlledUnetModel(keras.Model):
         #     )
         #     self.load_weights(diffusion_model_weights_fpath)
 
-    def call(self, context, t_embed_input, latent, control):
+    def __call__(self, context, t_embed_input, latent, control):
         t_emb = self.time_embedding_model(t_embed_input)
+        context = tf.stack(tf.squeeze(context, axis=1), axis=0)
 
         index = 0
         output = []
 
         # Downsampling flow
-        x = self.layers[index](latent); index += 1
+        x = self.unet_layers[index](latent); index += 1
         output.append(x)
         ### SD Encoder Block 1
         for _ in range(2):
-            x = self.layers[index]([x, t_emb]); index += 1
-            x = self.layers[index]([x, context]); index += 1
+            x = self.unet_layers[index]([x, t_emb]); index += 1
+            x = self.unet_layers[index]([x, context]); index += 1
             output.append(x)
-        x = self.layers[index](x); index += 1
+        x = self.unet_layers[index](x); index += 1
         output.append(x)
         ### SD Encoder Block 2
         for _ in range(2):
-            x = self.layers[index]([x, t_emb]); index += 1
-            x = self.layers[index]([x, context]); index += 1
+            x = self.unet_layers[index]([x, t_emb]); index += 1
+            x = self.unet_layers[index]([x, context]); index += 1
             output.append(x)
-        x = self.layers[index](x); index += 1
+        x = self.unet_layers[index](x); index += 1
         output.append(x)
         ### SD Encoder Block 3
         for _ in range(2):
-            x = self.layers[index]([x, t_emb]); index += 1
-            x = self.layers[index]([x, context]); index += 1
+            x = self.unet_layers[index]([x, t_emb]); index += 1
+            x = self.unet_layers[index]([x, context]); index += 1
             output.append(x)
-        x = self.layers[index](x); index += 1
+        x = self.unet_layers[index](x); index += 1
         output.append(x)
         ### SD Encoder Block
         for _ in range(2):
-            x = self.layers[index]([x, t_emb]); index += 1
+            x = self.unet_layers[index]([x, t_emb]); index += 1
             output.append(x)
 
         # Middle flow
-        x = self.layers[index]([x, t_emb]); index += 1
-        x = self.layers[index]([x, context]); index += 1
-        x = self.layers[index]([x, t_emb]); index += 1
+        x = self.unet_layers[index]([x, t_emb]); index += 1
+        x = self.unet_layers[index]([x, context]); index += 1
+        x = self.unet_layers[index]([x, t_emb]); index += 1
 
         x += control.pop()
 
         # Upsampling flow
         ### SD Decoder
         for _ in range(3):
-            x = self.layers[index]([x, output.pop() + control.pop()]); index += 1
-            x = self.layers[index]([x, t_emb]); index += 1
-        x = self.layers[index](x); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.unet_layers[index]([x, t_emb]); index += 1
+        x = self.unet_layers[index](x); index += 1
         ### SD Decoder 3
         for _ in range(3):
-            x = self.layers[index]([x, output.pop() + control.pop()]); index += 1
-            x = self.layers[index]([x, t_emb]); index += 1
-            x = self.layers[index]([x, context]); index += 1
-        x = self.layers[index](x); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.unet_layers[index]([x, t_emb]); index += 1
+            x = self.unet_layers[index]([x, context]); index += 1
+        x = self.unet_layers[index](x); index += 1
         ### SD Decoder 2
         for _ in range(3):
-            x = self.layers[index]([x, output.pop() + control.pop()]); index += 1
-            x = self.layers[index]([x, t_emb]); index += 1
-            x = self.layers[index]([x, context]); index += 1
-        x = self.layers[index](x); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.unet_layers[index]([x, t_emb]); index += 1
+            x = self.unet_layers[index]([x, context]); index += 1
+        x = self.unet_layers[index](x); index += 1
         ### SD Decoder 1
         for _ in range(3):
-            x = self.layers[index]([x, output.pop() + control.pop()]); index += 1
-            x = self.layers[index]([x, t_emb]); index += 1
-            x = self.layers[index]([x, context]); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.unet_layers[index]([x, t_emb]); index += 1
+            x = self.unet_layers[index]([x, context]); index += 1
 
         # Exit flow
-        x = self.layers[index](x); index += 1
-        x = self.layers[index](x); index += 1
-        x = self.layers[index](x); index += 1
+        x = self.unet_layers[index](x); index += 1
+        x = self.unet_layers[index](x); index += 1
+        x = self.unet_layers[index](x); index += 1
 
         return x
         
@@ -320,15 +313,16 @@ class ControlSDB(keras_cv.models.StableDiffusion):
     def __init__(
         self,
         optimizer,
-        img_height=512,
-        img_width=512,
+        img_height=64,
+        img_width=64,
         jit_compile=True,
     ):
         super().__init__(img_height, img_width, jit_compile)
 
         self.noise_scheduler = keras_cv.models.stable_diffusion.NoiseScheduler()
+        self.max_grad_norm = 1.0
 
-        self.control_model = ControlNet(img_height, img_width)
+        self.control_model = ControlNet()
         self.control_scales = [1.0] * 13
         self.optimizer = optimizer
 
@@ -350,7 +344,7 @@ class ControlSDB(keras_cv.models.StableDiffusion):
 
             control = self.control_model(encoded_text, timestep_embedding_trainnable, noisy_latents, controls)
             control = [c * scale for c, scale in zip(control, self.control_scales)]
-            eps = self.diffusion_model(encoded_text, timestep_embedding_not_trainnable, noisy_latents)
+            eps = self.diffusion_model(encoded_text, timestep_embedding_not_trainnable, noisy_latents, control)
 
             loss_fn = tf.keras.losses.MeanSquaredError(
                 reduction='sum_over_batch_size',
@@ -409,9 +403,7 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         modified.
         """
         if self._diffusion_model is None:
-            self._diffusion_model = ControlledUnetModel(
-                self.img_height, self.img_width, MAX_PROMPT_LENGTH
-            )
+            self._diffusion_model = ControlledUnetModel()
             # if self.jit_compile:
             #     self._diffusion_model.compile(jit_compile=True)
         return self._diffusion_model

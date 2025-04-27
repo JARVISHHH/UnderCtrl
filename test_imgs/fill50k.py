@@ -10,8 +10,7 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
-
-def load_data():
+def load_data(img_size):
     with open('./training/fill50k/prompt.json', 'rt') as f:
         for line in f:
             item = json.loads(line)
@@ -33,9 +32,9 @@ def load_data():
             # normalize target to -1 to 1 range
             target = (target.astype(np.float32) / 127.5) - 1.0
 
-            # resize to 512x512
-            source = cv2.resize(source, (512, 512))
-            target = cv2.resize(target, (512, 512))
+            # resize to img_size x img_size
+            source = cv2.resize(source, (img_size, img_size))
+            target = cv2.resize(target, (img_size, img_size))
 
             yield {
                 'jpg': target,
@@ -43,9 +42,9 @@ def load_data():
                 'txt': prompt
             }
 
-def get_dataset():
+def get_dataset(batch_size, img_size):
     dataset = tf.data.Dataset.from_generator(
-        load_data,
+        lambda: load_data(img_size),
         output_signature={
             'jpg': tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
             'hint': tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
@@ -53,6 +52,6 @@ def get_dataset():
         }
     )
 
-    dataset = dataset.shuffle(1000).batch(8).prefetch(tf.data.AUTOTUNE)
+    dataset = dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     return dataset
