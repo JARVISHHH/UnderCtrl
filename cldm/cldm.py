@@ -15,7 +15,7 @@ class ControlNet(keras.Model):
             self,
             img_height=512,
             img_width=512,
-            hint_image_size=(512, 512),
+            hint_image_size=(512, 512, 3),
             download_weights=True, 
         ):
 
@@ -47,10 +47,12 @@ class ControlNet(keras.Model):
             PaddedConv2D(filters=256, kernel_size=3, strides=2, padding=1),
             keras.layers.Activation("swish"),
             ZeroPaddedConv2D(filters=320, kernel_size=3, strides=2, padding=1),
+            keras.layers.UpSampling2D(size=(2, 2), interpolation='bilinear'),
         ])
 
-        self.layers = [
-            keras.layers.Input((img_height // 8, img_width // 8, 4), name="latent"),
+        # self.layers is a reserved field
+        self.control_layers = [
+            # keras.layers.Input((img_height // 8, img_width // 8, 4), name="latent"),
             # Downsampling flow
             PaddedConv2D(320, kernel_size=3, padding=1),
             ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0),  # Control
@@ -97,44 +99,45 @@ class ControlNet(keras.Model):
     def call(self, context, t_embed_input, latent, control):
         t_emb = self.time_embedding_model(t_embed_input)
         guided_hint = self.hint_embedding_model(control)
+        context = tf.concat(context, axis=1)
 
         index = 0
         final_output = []
 
         # Downsampling flow
-        x = self.layers[index](latent); index += 1; x += guided_hint
-        final_output.append(self.layers[index](x)); index += 1
+        x = self.control_layers[index](latent); index += 1; x += guided_hint
+        final_output.append(self.control_layers[index](x)); index += 1
         ### SD Encoder Block 1
         for _ in range(2):
-            x = self.layers[index]([x, t_emb]); index += 1
-            x = self.layers[index]([x, context]); index += 1
-            final_output.append(self.layers[index](x)); index += 1
-        x = self.layers[index](x); index += 1
-        final_output.append(self.layers[index](x)); index += 1
+            x = self.control_layers[index]([x, t_emb]); index += 1
+            x = self.control_layers[index]([x, context]); index += 1
+            final_output.append(self.control_layers[index](x)); index += 1
+        x = self.control_layers[index](x); index += 1
+        final_output.append(self.control_layers[index](x)); index += 1
         ### SD Encoder Block 2
         for _ in range(2):
-            x = self.layers[index]([x, t_emb]); index += 1
-            x = self.layers[index]([x, context]); index += 1
-            final_output.append(self.layers[index](x)); index += 1
-        x = self.layers[index](x); index += 1
-        final_output.append(self.layers[index](x)); index += 1
+            x = self.control_layers[index]([x, t_emb]); index += 1
+            x = self.control_layers[index]([x, context]); index += 1
+            final_output.append(self.control_layers[index](x)); index += 1
+        x = self.control_layers[index](x); index += 1
+        final_output.append(self.control_layers[index](x)); index += 1
         ### SD Encoder Block 3
         for _ in range(2):
-            x = self.layers[index]([x, t_emb]); index += 1
-            x = self.layers[index]([x, context]); index += 1
-            final_output.append(self.layers[index](x)); index += 1
-        x = self.layers[index](x); index += 1
-        final_output.append(self.layers[index](x)); index += 1
+            x = self.control_layers[index]([x, t_emb]); index += 1
+            x = self.control_layers[index]([x, context]); index += 1
+            final_output.append(self.control_layers[index](x)); index += 1
+        x = self.control_layers[index](x); index += 1
+        final_output.append(self.control_layers[index](x)); index += 1
         ### SD Encoder Block
         for _ in range(2):
-            x = self.layers[index]([x, t_emb]); index += 1
-            final_output.append(self.layers[index](x)); index += 1
+            x = self.control_layers[index]([x, t_emb]); index += 1
+            final_output.append(self.control_layers[index](x)); index += 1
 
         # Middle flow
-        x = self.layers[index]([x, t_emb]); index += 1
-        x = self.layers[index]([x, context]); index += 1
-        x = self.layers[index]([x, t_emb]); index += 1
-        final_output.append(self.layers[index](x)); index += 1
+        x = self.control_layers[index]([x, t_emb]); index += 1
+        x = self.control_layers[index]([x, context]); index += 1
+        x = self.control_layers[index]([x, t_emb]); index += 1
+        final_output.append(self.control_layers[index](x)); index += 1
 
         return final_output
 
@@ -316,6 +319,7 @@ class ControlledUnetModel(keras.Model):
 class ControlSDB(keras_cv.models.StableDiffusion):
     def __init__(
         self,
+        optimizer,
         img_height=512,
         img_width=512,
         jit_compile=True,
@@ -326,6 +330,7 @@ class ControlSDB(keras_cv.models.StableDiffusion):
 
         self.control_model = ControlNet(img_height, img_width)
         self.control_scales = [1.0] * 13
+        self.optimizer = optimizer
 
     def train_step(self, inputs):
         latents, encoded_text, controls = self.get_input(inputs)
@@ -340,14 +345,18 @@ class ControlSDB(keras_cv.models.StableDiffusion):
             target = noise
 
             # Check this
-            timestep_embedding_not_trainnable = tf.no_gradient(timestep_embedding(timesteps))
+            timestep_embedding_not_trainnable = tf.stop_gradient(timestep_embedding(timesteps))
             timestep_embedding_trainnable = timestep_embedding(timesteps)
 
             control = self.control_model(encoded_text, timestep_embedding_trainnable, noisy_latents, controls)
             control = [c * scale for c, scale in zip(control, self.control_scales)]
             eps = self.diffusion_model(encoded_text, timestep_embedding_not_trainnable, noisy_latents)
 
-            loss = self.compiled_loss(target, eps)
+            loss_fn = tf.keras.losses.MeanSquaredError(
+                reduction='sum_over_batch_size',
+                name='mean_squared_error'
+            )
+            loss = loss_fn(target, eps)
         
         trainable_vars = self.control_model.trainable_variables + self.diffusion_model.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
@@ -384,8 +393,10 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         latents = self.image_encoder(images)
         # condition/prompt/txt refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/ldm/models/diffusion/ddpm.py#L767
         captions = inputs["txt"]
+        captions = captions.numpy().tolist()
+        captions = [c.decode("utf-8") if isinstance(c, bytes) else c for c in captions]
         # TODO: use FrozenCLIPEmbedder, is encode_text the same as FrozenCLIPEmbedder?
-        encoded_text = self.encode_text(captions)
+        encoded_text = [self.encode_text(caption) for caption in captions]
         # control refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/cldm/cldm.py#L318
         controls = inputs["hint"]
 
