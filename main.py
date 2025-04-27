@@ -6,6 +6,8 @@ import numpy as np
 from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
 import tensorflow_probability as tfp
 from transformers import TFCLIPModel, CLIPProcessor
+from PIL import Image
+import os
 
 import matplotlib.pyplot as plt
 
@@ -52,22 +54,35 @@ def main():
     
     print("----------Finish Training----------")
 
-    epochs = list(range(1, len(losses) + 1))
-    plt.plot(epochs, losses, label='Loss')
-    plt.title('Training Loss over Epochs')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.show()
+    # epochs = list(range(1, len(losses) + 1))
+    # plt.plot(epochs, losses, label='Loss')
+    # plt.title('Training Loss over Epochs')
+    # plt.xlabel('Epochs')
+    # plt.ylabel('Loss')
+    # plt.legend()
+    # plt.show()
+    # print('----------Finish graphing-----------')
 
-    captions = [data['txt'] for data in test_dataset]
+    print('----------Start Testing----------')
+    captions = [data['txt'] for data in test_dataset.take(1)]
     generated_images_sd = []
-    stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=rgs.img_size)
-
+    stable_diffusion = keras_cv.models.StableDiffusion(img_width=512, img_height=512)
+    print('Created stable diffusion')
     for caption in captions:
-        generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=3))
+        if isinstance(caption, tf.Tensor):
+            caption_str = caption.numpy()[0]
+            if isinstance(caption_str, bytes):
+                caption_str = caption_str.decode("utf-8")
+        else:
+            caption_str = caption
+        generated_images_sd.append(stable_diffusion.text_to_image(caption_str, batch_size=args.batch_size))
+    generated_images_sd = resize_images(generated_images_sd)
+    print('Finish inference in sd')
+    generated_images_controlnet = resize_images(model.predict(test_dataset.take(1)))
+    print('Finish inference in controlnet')
 
-    generated_images_controlnet = model.predict(test_dataset)
+    save_images(generated_images_sd, save_dir="outputs/sd", prefix="sd")
+    save_images(generated_images_controlnet, save_dir="outputs/controlnet", prefix="controlnet")
 
     clip_score_sd = calculate_clip_score(generated_images_sd, captions)
     clip_score_controlnet = calculate_clip_score(generated_images_controlnet, captions)
@@ -82,6 +97,10 @@ def main():
     print("Stable Diffusion: " + str(fid_score_sd))
     print("Control Net: " + str(fid_score_controlnet))
 
+def resize_images(images, target_size=(299, 299)):
+    images = tf.convert_to_tensor(images, dtype=tf.float32)
+    resized = tf.image.resize(images, size=target_size, method='bilinear')
+    return resized
 
 def calculate_clip_score(images, captions):
     inputs = clip_tokenizer(
@@ -137,6 +156,14 @@ def calculate_fid_score(real_images, generated_images):
 
     fid = tf.reduce_sum(tf.square(mu_1 - mu_2)) + tf.linalg.trace(c_1 + c_2 - 2.0 * sqrt_c_1_mult_c_2)
     return fid.numpy().item()
+
+def save_images(images, save_dir, prefix="img"):
+    os.makedirs(save_dir, exist_ok=True)
+    for i, img in enumerate(images):
+        if isinstance(img, tf.Tensor):
+            img = img.numpy()
+        img_pil = Image.fromarray(img)
+        img_pil.save(os.path.join(save_dir, f"{prefix}_{i}.png"))
 
 if __name__ == '__main__':
     main()
