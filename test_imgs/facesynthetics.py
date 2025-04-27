@@ -1,8 +1,6 @@
 import tensorflow as tf
-from datasets import load_dataset, load_from_disk
-from PIL import Image
+from datasets import load_dataset
 import numpy as np
-import io
 
 hf_dataset = load_dataset("multimodalart/facesyntheticsspigacaptioned", split='train')
 

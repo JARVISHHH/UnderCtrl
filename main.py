@@ -10,7 +10,7 @@ from transformers import TFCLIPModel, CLIPProcessor
 import matplotlib.pyplot as plt
 
 inception_model = InceptionV3(include_top=False, weights='imagenet', pooling='avg')
-clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=False)
 clip_model = TFCLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 
 def parse_args():
@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--save_dir', type=str, default='./checkpoints')
-    parser.add_argument('--img_size', type=int, default=64)
+    parser.add_argument('--img_size', type=int, default=256)
     return parser.parse_args()
 
 def main():
@@ -58,7 +58,11 @@ def main():
     plt.legend()
     plt.show()
 
-    captions = [data['txt'] for data in test_dataset]
+    # captions = [data['txt'] for data in test_dataset]
+    captions = []
+    for batch in test_dataset:
+        captions.extend(batch['txt'].numpy().tolist())
+    captions = [c.decode('utf-8') if isinstance(c, bytes) else c for c in captions]
     generated_images_sd = []
     stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
 
@@ -82,6 +86,9 @@ def main():
 
 
 def calculate_clip_score(images, captions):
+    if isinstance(images, tf.Tensor):
+        images = images.numpy()
+
     inputs = clip_tokenizer(
         text=captions,
         images=images,
@@ -113,6 +120,9 @@ def get_activations(images: tf.Tensor, batch_size=32):
     return activations
 
 def calculate_fid_score(real_images, generated_images):
+    real_images = tf.concat(real_images, axis=0)
+    generated_images = tf.concat(generated_images, axis=0)
+
     # d^2 = ||mu_1 – mu_2||^2 + Tr(c_1 + c_2 – 2*sqrt(c_1*c_2))
     act_1 = get_activations(real_images)
     act_2 = get_activations(generated_images)
