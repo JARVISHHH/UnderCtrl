@@ -73,18 +73,19 @@ def main():
 
     losses = []
 
-    for epoch in range(args.epochs):
-        for batch in train_dataset.take(1):
-            losses.append(model.train_step(batch)['loss'])
-
     # for epoch in range(args.epochs):
-    #     epoch_loss = 0
-    #     for batch in train_dataset:
-    #         loss = model.train_step(batch)
-    #         epoch_loss += loss['loss']
-    #     avg_epoch_loss = epoch_loss / len(train_dataset)
-    #     losses.append(avg_epoch_loss)
-    #     print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
+    #     for batch in train_dataset.take(1):
+    #         losses.append(model.train_step(batch)['loss'])
+
+    for epoch in range(args.epochs):
+        epoch_loss = 0
+        for batch in train_dataset:
+            loss = model.train_step(batch)
+            epoch_loss += loss['loss']
+            print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {loss['loss']:.6f}")
+        avg_epoch_loss = epoch_loss / len(train_dataset)
+        losses.append(avg_epoch_loss)
+        print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
         
         # Save the model weights after each epoch
         try:
@@ -93,10 +94,10 @@ def main():
         except Exception as e:
             print("Failed to save weights:", e)
 
-        # # early stopping
-        # if avg_epoch_loss < 0.01:
-        #     print("Early stopping...")
-        #     break
+        # early stopping
+        if avg_epoch_loss < 0.01:
+            print("Early stopping...")
+            break
 
         
     
