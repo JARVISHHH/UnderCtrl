@@ -78,10 +78,6 @@ def main():
             print("Failed to load weights:", e)
             print("Train from scratch.")
 
-    print("----------Start Training----------")
-
-    losses = []
-
     # for epoch in range(args.epochs):
     #     for batch in train_dataset.take(1):
     #         losses.append(model.train_step(batch)['loss'])
@@ -99,10 +95,12 @@ def main():
         start_epoch = args.load_epoch if args.resume else 0
         for epoch in range(start_epoch, start_epoch+args.epochs):
             epoch_loss = 0
+            batch_num = 1
             for batch in train_dataset:
                 loss = model.train_step(batch)
                 epoch_loss += loss['loss']
-                print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {loss['loss']:.6f}")
+                print(f"Epoch {epoch+1}/{args.epochs}, Batch {batch_num}/{dataset_length // args.batch_size} Loss: {loss['loss']:.6f}")
+                batch_num += 1
             avg_epoch_loss = epoch_loss / len(train_dataset)
             losses.append(avg_epoch_loss)
             print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
