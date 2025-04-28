@@ -12,19 +12,16 @@ import keras
 import numpy as np
 from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
 import tensorflow_probability as tfp
-from transformers import TFCLIPModel, CLIPProcessor
 from PIL import Image
 import os
 
 import matplotlib.pyplot as plt
 
 inception_model = InceptionV3(include_top=False, weights='imagenet', pooling='avg')
-clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=False)
-clip_model = TFCLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train and Test ControlNet")
-    parser.add_argument('--dataset', type=str, default='fill50k', choices=['fill50k', 'facesynthetics'])
+    parser.add_argument('--dataset', type=str, default='facesynthetics', choices=['fill50k', 'facesynthetics'])
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
@@ -43,14 +40,14 @@ def main():
 
     os.makedirs(args.save_dir, exist_ok=True) # if exists, do nothing
 
+    model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
+
     if args.dataset == 'fill50k':
         from test_imgs import fill50k
-        train_dataset, test_dataset, dataset_length = fill50k.get_dataset(args.batch_size, args.img_size)
+        train_dataset, test_dataset, dataset_length = fill50k.get_dataset(model, args.batch_size, args.img_size)
     else:
         from test_imgs import facesynthetics
-        train_dataset, test_dataset, dataset_length = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
-
-    model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
+        train_dataset, test_dataset, dataset_length = facesynthetics.get_dataset(model, batch_size=args.batch_size, img_size=args.img_size)
 
     # build model
     dummy_input_shape = (args.batch_size, args.img_size, args.img_size, 3)
@@ -181,6 +178,7 @@ def main():
         image = model.predict(batch)
         generated_images_controlnet.append(image)
     generated_images_controlnet = model.predict(test_dataset)
+    generated_images_controlnet = tf.cast(generated_images_controlnet, tf.float32)
     # print(generated_images_controlnet)
 
     # save_images(generated_images_sd, save_dir="outputs/sd", prefix="sd")
