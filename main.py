@@ -12,6 +12,7 @@ import numpy as np
 from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
 import tensorflow_probability as tfp
 from transformers import TFCLIPModel, CLIPProcessor
+from PIL import Image
 import os
 
 import matplotlib.pyplot as plt
@@ -43,10 +44,10 @@ def main():
 
     if args.dataset == 'fill50k':
         from test_imgs import fill50k
-        train_dataset, test_dataset = fill50k.get_dataset(args.batch_size, args.img_size)
+        train_dataset, test_dataset, dataset_length = fill50k.get_dataset(args.batch_size, args.img_size)
     else:
         from test_imgs import facesynthetics
-        train_dataset, test_dataset = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
+        train_dataset, test_dataset, dataset_length = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
 
@@ -76,7 +77,15 @@ def main():
         except Exception as e:
             print("Failed to load weights:", e)
             print("Train from scratch.")
-    
+
+    print("----------Start Training----------")
+
+    losses = []
+
+    # for epoch in range(args.epochs):
+    #     for batch in train_dataset.take(1):
+    #         losses.append(model.train_step(batch)['loss'])
+
     if args.train:
         print("----------Start Training----------")
         losses = []
@@ -105,13 +114,20 @@ def main():
                 print(f"Saved weights for epoch {epoch+1}.")
             except Exception as e:
                 print("Failed to save weights:", e)
-
             # early stopping
             if avg_epoch_loss < 0.01:
                 print("Early stopping...")
                 break
         
         print("----------Finish Training----------")
+
+    captions = [data['txt'] for data in test_dataset]
+    captions = []
+    for batch in test_dataset:
+        captions.extend(batch['txt'].numpy().tolist())
+    captions = [c.decode('utf-8') if isinstance(c, bytes) else c for c in captions]
+    generated_images_sd = []
+    stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
 
     if args.save_imgs:
         epochs = list(range(1, len(losses) + 1))
@@ -124,7 +140,15 @@ def main():
         plt.cla()
         plt.close('all')
 
-        print("----------Image Saved----------")
+    generated_images_controlnet = []
+    for batch in test_dataset.take(1):
+        image = model.predict(batch)
+        generated_images_controlnet.append(image)
+    generated_images_controlnet = model.predict(test_dataset)
+    # print(generated_images_controlnet)
+
+    # save_images(generated_images_sd, save_dir="outputs/sd", prefix="sd")
+    # save_images(generated_images_controlnet, save_dir="outputs/controlnet", prefix="controlnet")
 
     if args.test:
         print("----------Start Testing----------")
@@ -150,6 +174,11 @@ def main():
         print("Stable Diffusion: " + str(fid_score_sd))
         print("Control Net: " + str(fid_score_controlnet))
         print("----------Finish Testing----------")
+
+def resize_images(images, target_size=(299, 299)):
+    images = tf.convert_to_tensor(images, dtype=tf.float32)
+    resized = tf.image.resize(images, size=target_size, method='bilinear')
+    return resized
 
 def calculate_clip_score(images, captions):
     if isinstance(images, tf.Tensor):
@@ -211,6 +240,27 @@ def calculate_fid_score(real_images, generated_images):
 
     fid = tf.reduce_sum(tf.square(mu_1 - mu_2)) + tf.linalg.trace(c_1 + c_2 - 2.0 * sqrt_c_1_mult_c_2)
     return fid.numpy().item()
+
+def save_images(images, save_dir, prefix="img"):
+    os.makedirs(save_dir, exist_ok=True)
+    for i, img in enumerate(images):
+        if isinstance(img, tf.Tensor):
+            img = img.numpy()
+        if len(img.shape) == 4:
+            img = np.squeeze(img)
+        if img.dtype == np.float32:
+            if img.min() < 0 or img.max() > 1:
+                img = (img + 1) * 127.5
+            else:
+                img = img * 255
+            img = img.astype(np.uint8)
+        
+        if len(img.shape) == 2:
+            img = np.expand_dims(img, axis=-1)
+            img = np.repeat(img, 3, axis=-1)
+
+        img_pil = Image.fromarray(img)
+        img_pil.save(os.path.join(save_dir, f"{prefix}_{i}.png"))
 
 if __name__ == '__main__':
     main()

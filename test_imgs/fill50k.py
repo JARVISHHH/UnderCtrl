@@ -62,4 +62,4 @@ def get_dataset(batch_size, img_size, shuffle_seed=42):
     train_dataset = train_dataset.shuffle(1000, seed=shuffle_seed).batch(batch_size).prefetch(tf.data.AUTOTUNE)
     test_dataset = test_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
-    return train_dataset, test_dataset
+    return train_dataset, test_dataset, dataset_length

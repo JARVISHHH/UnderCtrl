@@ -395,27 +395,44 @@ class ControlSDB(keras_cv.models.StableDiffusion):
     def predict(self, inputs, num_inference_steps=50):
         latents, encoded_text, control = self.get_input(inputs)
         batch_size = tf.shape(latents)[0]
-        
-        noisy_latents = tf.random.normal(shape=tf.shape(latents), dtype=latents.dtype)
 
-        for step in range(num_inference_steps):
-            timestep = tf.fill([batch_size], self.noise_scheduler.inference_timesteps[step])
-            timestep_emb = timestep_embedding(timestep)
-            
+        timesteps = tf.range(1, num_inference_steps + 1)
+        timesteps = tf.reverse(timesteps, axis=[0])
+        
+        noise = tf.random.normal(shape=tf.shape(latents), dtype=latents.dtype)
+        latents = self.noise_scheduler.add_noise(latents, noise, timesteps[0])
+
+        for i, t in enumerate(timesteps):
+            t_embed = timestep_embedding(tf.repeat(t, batch_size))
+
             if isinstance(encoded_text, list):
                 encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
             else:
                 encoded_text = tf.convert_to_tensor(encoded_text)
+            
+            control_output = self.control_model([encoded_text, t_embed, latents, control])
+            control_output = [c * scale for c, scale in zip(control_output, self.control_scales)]
+            
+            noise_pred = self.diffuser([encoded_text, t_embed, latents, control_output])
+        
+            prev_timestep = t - (self.noise_scheduler.train_timesteps // num_inference_steps)
+            alpha_prod_t = self.noise_scheduler.alphas_cumprod[t]
+            alpha_prod_t_prev = self.noise_scheduler.alphas_cumprod[prev_timestep] if prev_timestep >= 0 else 1.0
+            beta_prod_t = 1 - alpha_prod_t
+            beta_prod_t_prev = 1 - alpha_prod_t_prev
 
-            control = self.control_model([encoded_text, timestep_emb, noisy_latents, control])
-            control = [c * scale for c, scale in zip(control, self.control_scales)]
+            pred_original_sample = (latents - beta_prod_t ** 0.5 * noise_pred) / alpha_prod_t ** 0.5
+            pred_original_sample = tf.clip_by_value(pred_original_sample, -1, 1)
 
-            pred_noise = self.diffuser([encoded_text, timestep_emb, noisy_latents, control])
+            variance = (beta_prod_t_prev / beta_prod_t) * (1 - alpha_prod_t / alpha_prod_t_prev)
+            std_dev_t = variance ** 0.5
 
-            noisy_latents = self.noise_scheduler.step(pred_noise, timestep, noisy_latents)
+            noise = tf.random.normal(tf.shape(latents), dtype=latents.dtype)
+            latents = alpha_prod_t_prev ** 0.5 * pred_original_sample + std_dev_t * noise
+    
+        images = self.decoder(latents)
+        return images
 
-        decoded = self.vae.decoder(noisy_latents)
-        return decoded
 
     def get_input(self, inputs):
         # TODO: should images be rearranged? from (b h w c) to (b c h w)?
