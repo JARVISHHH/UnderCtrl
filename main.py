@@ -35,10 +35,10 @@ def main():
 
     if args.dataset == 'fill50k':
         from test_imgs import fill50k
-        train_dataset, test_dataset = fill50k.get_dataset(args.batch_size, args.img_size)
+        train_dataset, test_dataset, dataset_length = fill50k.get_dataset(args.batch_size, args.img_size)
     else:
         from test_imgs import facesynthetics
-        train_dataset, test_dataset = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
+        train_dataset, test_dataset, dataset_length = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
 
@@ -80,11 +80,11 @@ def main():
 
     for epoch in range(args.epochs):
         epoch_loss = 0
-        for batch in train_dataset:
+        for batch in train_dataset.take(1):
             loss = model.train_step(batch)
             epoch_loss += loss['loss']
             print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {loss['loss']:.6f}")
-        avg_epoch_loss = epoch_loss / len(train_dataset)
+        avg_epoch_loss = epoch_loss / dataset_length
         losses.append(avg_epoch_loss)
         print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
         
@@ -116,32 +116,39 @@ def main():
 
     print("----------Image Saved----------")
 
-    # captions = [data['txt'] for data in test_dataset]
-    # captions = []
-    # for batch in test_dataset:
-    #     captions.extend(batch['txt'].numpy().tolist())
-    # captions = [c.decode('utf-8') if isinstance(c, bytes) else c for c in captions]
-    # generated_images_sd = []
-    # stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
+    captions = [data['txt'] for data in test_dataset]
+    captions = []
+    for batch in test_dataset:
+        captions.extend(batch['txt'].numpy().tolist())
+    captions = [c.decode('utf-8') if isinstance(c, bytes) else c for c in captions]
+    generated_images_sd = []
+    stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
 
-    # for caption in captions:
-    #     generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=args.batch_size))
+    for caption in captions:
+        generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=args.batch_size))
+
+    generated_images_controlnet = []
+    for batch in test_dataset.take(1):
+        image = model.predict(batch)
+        generated_images_controlnet.append(image)
+    generated_images_controlnet = model.predict(test_dataset)
+    # print(generated_images_controlnet)
 
     # save_images(generated_images_sd, save_dir="outputs/sd", prefix="sd")
-    save_images(generated_images_controlnet, save_dir="outputs/controlnet", prefix="controlnet")
+    # save_images(generated_images_controlnet, save_dir="outputs/controlnet", prefix="controlnet")
 
-    # clip_score_sd = calculate_clip_score(generated_images_sd, captions)
-    # clip_score_controlnet = calculate_clip_score(generated_images_controlnet, captions)
-    # print("CLIP Score:")
-    # print("Stable Diffusion: " + str(clip_score_sd))
-    # print("Control Net: " + str(clip_score_controlnet))
+    clip_score_sd = calculate_clip_score(generated_images_sd, captions)
+    clip_score_controlnet = calculate_clip_score(generated_images_controlnet, captions)
+    print("CLIP Score:")
+    print("Stable Diffusion: " + str(clip_score_sd))
+    print("Control Net: " + str(clip_score_controlnet))
 
-    # real_images = [data['jpg'] for data in test_dataset]
-    # fid_score_sd = calculate_fid_score(real_images, generated_images_sd)
-    # fid_score_controlnet = calculate_fid_score(real_images, generated_images_controlnet)
-    # print("FID Score:")
-    # print("Stable Diffusion: " + str(fid_score_sd))
-    # print("Control Net: " + str(fid_score_controlnet))
+    real_images = [data['jpg'] for data in test_dataset]
+    fid_score_sd = calculate_fid_score(real_images, generated_images_sd)
+    fid_score_controlnet = calculate_fid_score(real_images, generated_images_controlnet)
+    print("FID Score:")
+    print("Stable Diffusion: " + str(fid_score_sd))
+    print("Control Net: " + str(fid_score_controlnet))
 
 def resize_images(images, target_size=(299, 299)):
     images = tf.convert_to_tensor(images, dtype=tf.float32)
@@ -214,6 +221,19 @@ def save_images(images, save_dir, prefix="img"):
     for i, img in enumerate(images):
         if isinstance(img, tf.Tensor):
             img = img.numpy()
+        if len(img.shape) == 4:
+            img = np.squeeze(img)
+        if img.dtype == np.float32:
+            if img.min() < 0 or img.max() > 1:
+                img = (img + 1) * 127.5
+            else:
+                img = img * 255
+            img = img.astype(np.uint8)
+        
+        if len(img.shape) == 2:
+            img = np.expand_dims(img, axis=-1)
+            img = np.repeat(img, 3, axis=-1)
+
         img_pil = Image.fromarray(img)
         img_pil.save(os.path.join(save_dir, f"{prefix}_{i}.png"))
 

@@ -53,8 +53,9 @@ def get_dataset(batch_size=8, img_size=256):
     # print(f"Preprocessing completed.")
 
     train_data = train_data.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    test_data = test_data.batch(batch_size)
 
-    return train_data, test_data
+    return train_data, test_data, dataset_length
 
 # Usage example
 # dataset = get_dataset()
