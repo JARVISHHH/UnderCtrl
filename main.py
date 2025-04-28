@@ -1,6 +1,7 @@
 # train only: python main.py --dataset <dataset> --epochs <epochs> --train --save_imgs
 # resume training: python main.py --dataset <dataset> --epochs <epochs> --resume --load_epoch <load_epoch> --train --save_imgs
-# test only: python main.py --dataset <dataset> --resume --load_epoch <load_epoch> --test
+# resume training: python main.py --dataset <dataset> --epochs <epochs> --resume --load_current --train --save_imgs
+# test only: python main.py --dataset <dataset> --resume --load_best --test
 # keep batch size same for train and test
 
 import argparse
@@ -31,7 +32,7 @@ def parse_args():
     parser.add_argument('--img_size', type=int, default=256)
     parser.add_argument('--resume', action='store_true') # Set to True to resume training
     parser.add_argument('--load_dir', type=str, default='./checkpoints')
-    parser.add_argument('--load_epoch', type=int, default=1)
+    parser.add_argument('--load_epoch', type=int, default=0, help='Epoch to load weights from')
     parser.add_argument('--train', action='store_true', help='Test the model') # Set to True to train the model
     parser.add_argument('--save_imgs', action='store_true', help='Save images') # Set to True to save images
     parser.add_argument('--test', action='store_true', help='Test the model') # Set to True to test the model
@@ -56,14 +57,30 @@ def main():
     model.build(dummy_input_shape)
 
     # load weights if available
-    if args.resume:
-        print("Loading weights...")
+    if args.resume and args.load_current:
+        print("Loading current weights...")
+        try:
+            model.control_model.load_weights(f"{args.load_dir}/controlnet_current.weights.h5")
+            model.diffuser.load_weights(f"{args.load_dir}/unet_current.weights.h5")
+            print(f"Loaded current weights successfully.")
+        except Exception as e:
+            print("Failed to load weights:", e)
+    elif args.resume and args.load_best:
+        print("Loading best weights...")
+        try:
+            model.control_model.load_weights(f"{args.load_dir}/controlnet_best.weights.h5")
+            model.diffuser.load_weights(f"{args.load_dir}/unet_best.weights.h5")
+            print("Loaded best weights successfully.")
+        except Exception as e:
+            print("Failed to load best weights:", e)
+    elif args.resume and args.load_epoch>0:
+        print("Loading epoch weights...")
         try:
             model.control_model.load_weights(f"{args.load_dir}/controlnet_epoch_{args.load_epoch}.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_epoch_{args.load_epoch}.weights.h5")
-            print("Loaded weights successfully.")
+            print("Loaded epoch weights successfully.")
         except Exception as e:
-            print("Failed to load weights:", e)
+            print("Failed to load epoch weights:", e)
     else:
         print("Loading original weights...")
         try:
@@ -78,29 +95,45 @@ def main():
             print("Failed to load weights:", e)
             print("Train from scratch.")
 
-    # for epoch in range(args.epochs):
-    #     for batch in train_dataset.take(1):
-    #         losses.append(model.train_step(batch)['loss'])
-
     if args.train:
         print("----------Start Training----------")
         losses = []
 
         # Uncomment the following lines to test training the model with a single batch
-        # for epoch in range(1):
+        # for epoch in range(args.epochs):
         #     for batch in train_dataset.take(1):
         #         losses.append(model.train_step(batch)['loss'])
         #         print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {losses[-1]:.6f}")
 
         start_epoch = args.load_epoch if args.resume else 0
+        best_epoch_loss = 0.01
         for epoch in range(start_epoch, start_epoch+args.epochs):
             epoch_loss = 0
-            batch_num = 1
+            best_batch_loss = 0.01
+            batch_num = 0
             for batch in train_dataset:
                 loss = model.train_step(batch)
                 epoch_loss += loss['loss']
-                print(f"Epoch {epoch+1}/{args.epochs}, Batch {batch_num}/{dataset_length // args.batch_size} Loss: {loss['loss']:.6f}")
                 batch_num += 1
+                print(f"Epoch {epoch+1}/{args.epochs}, Batch {batch_num}/{dataset_length // args.batch_size} Loss: {loss['loss']:.6f}")
+                
+                # save the model weights after every 100 batches
+                if batch_num % 20 == 0:
+                    try:
+                        model.control_model.save_weights(f"{args.save_dir}/controlnet_current.weights.h5")
+                        model.diffuser.save_weights(f"{args.save_dir}/unet_current.weights.h5")
+                        print(f"Saved current weights for epoch {epoch+1}, batch {batch_num}.")
+                    except Exception as e:
+                        print("Failed to save weights:", e)
+
+                if loss['loss'] < best_batch_loss:
+                    try:
+                        model.control_model.save_weights(f"{args.save_dir}/controlnet_best.weights.h5")
+                        model.diffuser.save_weights(f"{args.save_dir}/unet_best.weights.h5")
+                        print(f"Saved best weights for epoch {epoch+1}, batch {batch_num}.")
+                    except Exception as e:
+                        print("Failed to save weights:", e)
+
             avg_epoch_loss = epoch_loss / len(train_dataset)
             losses.append(avg_epoch_loss)
             print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
@@ -112,10 +145,15 @@ def main():
                 print(f"Saved weights for epoch {epoch+1}.")
             except Exception as e:
                 print("Failed to save weights:", e)
-            # early stopping
-            if avg_epoch_loss < 0.01:
-                print("Early stopping...")
-                break
+
+            if avg_epoch_loss < best_epoch_loss:
+                best_epoch_loss = avg_epoch_loss
+                try:
+                    model.control_model.save_weights(f"{args.save_dir}/controlnet_best_epoch.weights.h5")
+                    model.diffuser.save_weights(f"{args.save_dir}/unet_best_epoch.weights.h5")
+                    print(f"Saved best weights for epoch {epoch+1}.")
+                except Exception as e:
+                    print("Failed to save weights:", e)
         
         print("----------Finish Training----------")
 
