@@ -342,10 +342,12 @@ class ControlSDB(keras_cv.models.StableDiffusion):
 
         # Build control model
         control_outputs = self.control_model([dummy_context, timestep_emb, latents, controls])
+        self.control_model.built = True
         control_outputs = [c * scale for c, scale in zip(control_outputs, self.control_scales)]
 
         # Build diffusion model
         _ = self.diffuser([dummy_context, timestep_emb, latents, control_outputs])
+        self.diffuser.built = True
 
         self.control_model.summary()
         self.diffuser.summary()
