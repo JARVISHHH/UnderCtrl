@@ -42,7 +42,7 @@ def load_data(img_size):
                 'txt': prompt
             }
 
-def get_dataset(batch_size, img_size):
+def get_dataset(batch_size, img_size, shuffle_seed=42):
     dataset = tf.data.Dataset.from_generator(
         lambda: load_data(img_size),
         output_signature={
@@ -59,7 +59,7 @@ def get_dataset(batch_size, img_size):
     train_dataset = dataset.take(train_size)
     test_dataset = dataset.skip(train_size)
 
-    train_dataset = train_dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    train_dataset = train_dataset.shuffle(1000, seed=shuffle_seed).batch(batch_size).prefetch(tf.data.AUTOTUNE)
     test_dataset = test_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     return train_dataset, test_dataset

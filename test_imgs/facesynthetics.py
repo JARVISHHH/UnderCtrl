@@ -25,7 +25,7 @@ def generator(img_size):
         yield preprocess_example(example, img_size)
 
 
-def get_dataset(batch_size=8, img_size=256):
+def get_dataset(batch_size=8, img_size=256, shuffle_seed=42):
     output_signature = {
         "jpg": tf.TensorSpec(shape=(img_size, img_size, 3), dtype=tf.float32),
         "hint": tf.TensorSpec(shape=(img_size, img_size, 3), dtype=tf.float32),
@@ -52,7 +52,7 @@ def get_dataset(batch_size=8, img_size=256):
 
     # print(f"Preprocessing completed.")
 
-    train_data = train_data.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    train_data = train_data.shuffle(1000, seed=shuffle_seed).batch(batch_size).prefetch(tf.data.AUTOTUNE)
     test_data = test_data.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     return train_data, test_data
