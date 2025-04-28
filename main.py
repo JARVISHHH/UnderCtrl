@@ -22,7 +22,7 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--save_dir', type=str, default='./checkpoints')
-    parser.add_argument('--img_size', type=int, default=128)
+    parser.add_argument('--img_size', type=int, default=256)
     parser.add_argument('--resume', action='store_true', help='Resume training from last checkpoint')
     parser.add_argument('--test', action='store_true', help='Test the model')
     return parser.parse_args()
@@ -48,9 +48,9 @@ def main():
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
 
-    # build model
-    dummy_input_shape = (args.batch_size, args.img_size, args.img_size, 3)
-    model.build(dummy_input_shape)
+    # # build model
+    # dummy_input_shape = (args.batch_size, args.img_size, args.img_size, 3)
+    # model.build(dummy_input_shape)
 
     # load weights if available
     if args.resume:
@@ -83,11 +83,29 @@ def main():
     for epoch in range(args.epochs):
         for batch in train_dataset.take(1):
             losses.append(model.train_step(batch)['loss'])
+
+    # for epoch in range(args.epochs):
+    #     epoch_loss = 0
+    #     for batch in train_dataset:
+    #         loss = model.train_step(batch)
+    #         epoch_loss += loss['loss']
+    #     avg_epoch_loss = epoch_loss / len(train_dataset)
+    #     losses.append(avg_epoch_loss)
+    #     print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
+        
+        # Save the model weights after each epoch
         try:
             model.control_model.save_weights(f"{args.save_dir}/controlnet.weights.h5")
             model.diffuser.save_weights(f"{args.save_dir}/unet.weights.h5")
         except Exception as e:
             print("Failed to save weights:", e)
+
+        # # early stopping
+        # if avg_epoch_loss < 0.01:
+        #     print("Early stopping...")
+        #     break
+
+        
     
     print("----------Finish Training----------")
 
