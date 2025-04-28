@@ -175,9 +175,9 @@ class ControlledUnetModel(keras.Model):
             ResBlock(1280, trainable=False, name='lock_17'),
             ResBlock(1280, trainable=False, name='lock_18'),
             # Middle flow
-            ResBlock(1280, trainable=False, name='lock_1'),
-            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_19'),
-            ResBlock(1280, trainable=False, name='lock_20'),
+            ResBlock(1280, trainable=False, name='lock_19'),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_20'),
+            ResBlock(1280, trainable=False, name='lock_21'),
             # Upsampling flow
             ### SD Decoder
             keras.layers.Concatenate(),
@@ -358,7 +358,13 @@ class ControlSDB(keras_cv.models.StableDiffusion):
 
         with tf.GradientTape() as tape:
             noise = tf.random.normal(shape=tf.shape(latents), dtype=latents.dtype)
-            timesteps = np.random.randint(0, self.noise_scheduler.train_timesteps, (batch_size,))
+            timesteps = tf.random.stateless_uniform(
+                shape=(batch_size,),
+                seed=(0, 0),
+                minval=0,
+                maxval=self.noise_scheduler.train_timesteps,
+                dtype=tf.int32
+            )
             noisy_latents = self.noise_scheduler.add_noise(
                 latents, noise, timesteps
             )
@@ -383,6 +389,7 @@ class ControlSDB(keras_cv.models.StableDiffusion):
                 name='mean_squared_error'
             )
             loss = loss_fn(target, eps)
+            loss = tf.cast(loss, tf.float32)
         
         trainable_vars = self.control_model.trainable_variables + self.diffuser.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
@@ -390,7 +397,6 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
 
         return { 'loss': loss }
-
 
     def predict(self, inputs, num_inference_steps=50):
         latents, encoded_text, control = self.get_input(inputs)
@@ -433,18 +439,13 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         images = self.decoder(latents)
         return images
 
-
     def get_input(self, inputs):
         # TODO: should images be rearranged? from (b h w c) to (b c h w)?
         # jpg refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/ldm/models/diffusion/ddpm.py#L419
         images = inputs["jpg"]
         latents = self.image_encoder(images)
         # condition/prompt/txt refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/ldm/models/diffusion/ddpm.py#L767
-        captions = inputs["txt"]
-        captions = captions.numpy().tolist()
-        captions = [c.decode("utf-8") if isinstance(c, bytes) else c for c in captions]
-        # TODO: use FrozenCLIPEmbedder, is encode_text the same as FrozenCLIPEmbedder?
-        encoded_text = [self.encode_text(caption) for caption in captions]
+        encoded_text = inputs["txt"]
         # control refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/cldm/cldm.py#L318
         controls = inputs["hint"]
 
