@@ -60,5 +60,6 @@ def get_dataset(batch_size, img_size):
     test_dataset = dataset.skip(train_size)
 
     train_dataset = train_dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    test_dataset = test_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     return train_dataset, test_dataset

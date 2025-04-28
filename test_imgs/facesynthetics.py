@@ -37,7 +37,7 @@ def get_dataset(batch_size=8, img_size=256):
         output_signature=output_signature
     )
 
-    dataset_length = len(hf_dataset)
+    dataset_length = len(hf_dataset) # TODO: check if its correct here
 
     # print(f"Preprocessing {dataset_length} examples...")
 
@@ -53,6 +53,7 @@ def get_dataset(batch_size=8, img_size=256):
     # print(f"Preprocessing completed.")
 
     train_data = train_data.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    test_data = test_data.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     return train_data, test_data
 
