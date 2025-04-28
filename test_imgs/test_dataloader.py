@@ -40,7 +40,16 @@ def test_get_dataset():
         print(f"txt: {data['txt']}")
         if i == 1:
             break
-    print("Test completed.")
-
+    print("Test for train dataset completed.")
+    
+    for i, data in enumerate(train_dataset):
+        print(f"Batch {i}:")
+        print(f"jpg shape: {data['jpg'].shape}")
+        print(f"hint shape: {data['hint'].shape}")
+        print(f"txt: {data['txt']}")
+        if i == 1:
+            break
+    print("Test for test dataset completed.")
+    
 if __name__ == "__main__":
     test_get_dataset()
