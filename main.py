@@ -34,17 +34,10 @@ def main():
 
     if args.dataset == 'fill50k':
         from test_imgs import fill50k
-        dataset = fill50k.get_dataset(args.batch_size, args.img_size)
-        dataset_length = 50000
+        train_dataset, test_dataset = fill50k.get_dataset(args.batch_size, args.img_size)
     else:
         from test_imgs import facesynthetics
-        dataset = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
-        dataset_length = 50000  # TODO
-
-    # split dataset into train and test
-    train_size = int(dataset_length * 0.8)
-    train_dataset = dataset.take(train_size)
-    test_dataset = dataset.skip(train_size)
+        train_dataset, test_dataset = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
 
