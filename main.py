@@ -85,7 +85,7 @@ def main():
             losses.append(model.train_step(batch)['loss'])
         try:
             model.control_model.save_weights(f"{args.save_dir}/controlnet.weights.h5")
-            model.diffusion_model.save_weights(f"{args.save_dir}/unet.weights.h5")
+            model.diffuser.save_weights(f"{args.save_dir}/unet.weights.h5")
         except Exception as e:
             print("Failed to save weights:", e)
     
