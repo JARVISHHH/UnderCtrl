@@ -1,3 +1,8 @@
+# train only: python main.py --dataset <dataset> --epochs <epochs> --train --save_imgs
+# resume training: python main.py --dataset <dataset> --epochs <epochs> --resume --load_epoch <load_epoch> --train --save_imgs
+# test only: python main.py --dataset <dataset> --resume --load_epoch <load_epoch> --test
+# keep batch size same for train and test
+
 import argparse
 import tensorflow as tf
 from cldm.cldm import ControlSDB
@@ -18,13 +23,17 @@ clip_model = TFCLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 def parse_args():
     parser = argparse.ArgumentParser(description="Train and Test ControlNet")
     parser.add_argument('--dataset', type=str, default='fill50k', choices=['fill50k', 'facesynthetics'])
-    parser.add_argument('--epochs', type=int, default=1)
+    parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--save_dir', type=str, default='./checkpoints')
+    parser.add_argument('--save_dir', type=str, default='./checkpoints', help='Directory to save checkpoints and images')
     parser.add_argument('--img_size', type=int, default=256)
-    parser.add_argument('--resume', action='store_true', help='Resume training from last checkpoint')
-    parser.add_argument('--test', action='store_true', help='Test the model')
+    parser.add_argument('--resume', action='store_true') # Set to True to resume training
+    parser.add_argument('--load_dir', type=str, default='./checkpoints')
+    parser.add_argument('--load_epoch', type=int, default=1)
+    parser.add_argument('--train', action='store_true', help='Test the model') # Set to True to train the model
+    parser.add_argument('--save_imgs', action='store_true', help='Save images') # Set to True to save images
+    parser.add_argument('--test', action='store_true', help='Test the model') # Set to True to test the model
     return parser.parse_args()
 
 def main():
@@ -41,16 +50,16 @@ def main():
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
 
-    # # build model
-    # dummy_input_shape = (args.batch_size, args.img_size, args.img_size, 3)
-    # model.build(dummy_input_shape)
+    # build model
+    dummy_input_shape = (args.batch_size, args.img_size, args.img_size, 3)
+    model.build(dummy_input_shape)
 
     # load weights if available
     if args.resume:
         print("Loading weights...")
         try:
-            model.control_model.load_weights(f"{args.save_dir}/controlnet.weights.h5")
-            model.diffuser.load_weights(f"{args.save_dir}/unet.weights.h5")
+            model.control_model.load_weights(f"{args.load_dir}/controlnet_epoch_{args.load_epoch}.weights.h5")
+            model.diffuser.load_weights(f"{args.load_dir}/unet_epoch_{args.load_epoch}.weights.h5")
             print("Loaded weights successfully.")
         except Exception as e:
             print("Failed to load weights:", e)
@@ -67,80 +76,80 @@ def main():
         except Exception as e:
             print("Failed to load weights:", e)
             print("Train from scratch.")
-
-
-    print("----------Start Training----------")
-
-    losses = []
-
-    # for epoch in range(args.epochs):
-    #     for batch in train_dataset.take(1):
-    #         losses.append(model.train_step(batch)['loss'])
-
-    for epoch in range(args.epochs):
-        epoch_loss = 0
-        for batch in train_dataset:
-            loss = model.train_step(batch)
-            epoch_loss += loss['loss']
-            print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {loss['loss']:.6f}")
-        avg_epoch_loss = epoch_loss / len(train_dataset)
-        losses.append(avg_epoch_loss)
-        print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
-        
-        # Save the model weights after each epoch
-        try:
-            model.control_model.save_weights(f"{args.save_dir}/controlnet.weights.h5")
-            model.diffuser.save_weights(f"{args.save_dir}/unet.weights.h5")
-        except Exception as e:
-            print("Failed to save weights:", e)
-
-        # early stopping
-        if avg_epoch_loss < 0.01:
-            print("Early stopping...")
-            break
-
-        
     
-    print("----------Finish Training----------")
+    if args.train:
+        print("----------Start Training----------")
+        losses = []
 
-    epochs = list(range(1, len(losses) + 1))
-    plt.plot(epochs, losses, label='Loss')
-    plt.title('Training Loss over Epochs')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.savefig(f"{args.save_dir}/loss_curve.png")
-    plt.clf()
-    plt.cla()
-    plt.close('all')
+        # Uncomment the following lines to test training the model with a single batch
+        # for epoch in range(1):
+        #     for batch in train_dataset.take(1):
+        #         losses.append(model.train_step(batch)['loss'])
+        #         print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {losses[-1]:.6f}")
 
-    print("----------Image Saved----------")
+        start_epoch = args.load_epoch if args.resume else 0
+        for epoch in range(start_epoch, start_epoch+args.epochs):
+            epoch_loss = 0
+            for batch in train_dataset:
+                loss = model.train_step(batch)
+                epoch_loss += loss['loss']
+                print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {loss['loss']:.6f}")
+            avg_epoch_loss = epoch_loss / len(train_dataset)
+            losses.append(avg_epoch_loss)
+            print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
+            
+            # Save the model weights after each epoch
+            try:
+                model.control_model.save_weights(f"{args.save_dir}/controlnet_epoch_{epoch+1}.weights.h5")
+                model.diffuser.save_weights(f"{args.save_dir}/unet_epoch_{epoch+1}.weights.h5")
+                print(f"Saved weights for epoch {epoch+1}.")
+            except Exception as e:
+                print("Failed to save weights:", e)
 
-    # captions = [data['txt'] for data in test_dataset]
-    captions = []
-    for batch in test_dataset:
-        captions.extend(batch['txt'].numpy().tolist())
-    captions = [c.decode('utf-8') if isinstance(c, bytes) else c for c in captions]
-    generated_images_sd = []
-    stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
+            # early stopping
+            if avg_epoch_loss < 0.01:
+                print("Early stopping...")
+                break
+        
+        print("----------Finish Training----------")
 
-    for caption in captions:
-        generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=args.batch_size))
+    if args.save_imgs:
+        epochs = list(range(1, len(losses) + 1))
+        plt.plot(epochs, losses, label='Loss')
+        plt.title('Training Loss over Epochs')
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
+        plt.savefig(f"{args.save_dir}/loss_curve.png")
+        plt.clf()
+        plt.cla()
+        plt.close('all')
 
-    generated_images_controlnet = model.predict(test_dataset)
+        print("----------Image Saved----------")
 
-    clip_score_sd = calculate_clip_score(generated_images_sd, captions)
-    clip_score_controlnet = calculate_clip_score(generated_images_controlnet, captions)
-    print("CLIP Score:")
-    print("Stable Diffusion: " + str(clip_score_sd))
-    print("Control Net: " + str(clip_score_controlnet))
+    if args.test:
+        print("----------Start Testing----------")
+        captions = [data['txt'] for data in test_dataset]
+        generated_images_sd = []
+        stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
 
-    real_images = [data['jpg'] for data in test_dataset]
-    fid_score_sd = calculate_fid_score(real_images, generated_images_sd)
-    fid_score_controlnet = calculate_fid_score(real_images, generated_images_controlnet)
-    print("FID Score:")
-    print("Stable Diffusion: " + str(fid_score_sd))
-    print("Control Net: " + str(fid_score_controlnet))
+        for caption in captions:
+            generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=args.batch_size))
 
+        generated_images_controlnet = model.predict(test_dataset)
+
+        clip_score_sd = calculate_clip_score(generated_images_sd, captions)
+        clip_score_controlnet = calculate_clip_score(generated_images_controlnet, captions)
+        print("CLIP Score:")
+        print("Stable Diffusion: " + str(clip_score_sd))
+        print("Control Net: " + str(clip_score_controlnet))
+
+        real_images = [data['jpg'] for data in test_dataset]
+        fid_score_sd = calculate_fid_score(real_images, generated_images_sd)
+        fid_score_controlnet = calculate_fid_score(real_images, generated_images_controlnet)
+        print("FID Score:")
+        print("Stable Diffusion: " + str(fid_score_sd))
+        print("Control Net: " + str(fid_score_controlnet))
+        print("----------Finish Testing----------")
 
 def calculate_clip_score(images, captions):
     if isinstance(images, tf.Tensor):
