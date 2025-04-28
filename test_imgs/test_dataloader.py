@@ -31,16 +31,25 @@ def test_get_dataset():
         print("Please specify a dataset with --fill50k or --facesynthetics")
         return
 
-    dataset = get_dataset()
+    train_dataset, test_dataset = get_dataset(batch_size=8, img_size=256)
 
-    for i, data in enumerate(dataset):
+    for i, data in enumerate(train_dataset):
         print(f"Batch {i}:")
         print(f"jpg shape: {data['jpg'].shape}")
         print(f"hint shape: {data['hint'].shape}")
         print(f"txt: {data['txt']}")
         if i == 1:
             break
-    print("Test completed.")
-
+    print("Test for train dataset completed.")
+    
+    for i, data in enumerate(train_dataset):
+        print(f"Batch {i}:")
+        print(f"jpg shape: {data['jpg'].shape}")
+        print(f"hint shape: {data['hint'].shape}")
+        print(f"txt: {data['txt']}")
+        if i == 1:
+            break
+    print("Test for test dataset completed.")
+    
 if __name__ == "__main__":
     test_get_dataset()

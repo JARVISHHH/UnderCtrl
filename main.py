@@ -2,6 +2,7 @@ import argparse
 import tensorflow as tf
 from cldm.cldm import ControlSDB
 import keras_cv
+import keras
 import numpy as np
 from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
 import tensorflow_probability as tfp
@@ -12,7 +13,7 @@ import os
 import matplotlib.pyplot as plt
 
 inception_model = InceptionV3(include_top=False, weights='imagenet', pooling='avg')
-clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=False)
 clip_model = TFCLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 
 def parse_args():
@@ -22,80 +23,125 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--save_dir', type=str, default='./checkpoints')
-    parser.add_argument('--img_size', type=int, default=64)
+    parser.add_argument('--img_size', type=int, default=256)
+    parser.add_argument('--resume', action='store_true', help='Resume training from last checkpoint')
+    parser.add_argument('--test', action='store_true', help='Test the model')
     return parser.parse_args()
 
 def main():
     args = parse_args()
 
+    os.makedirs(args.save_dir, exist_ok=True) # if exists, do nothing
+
     if args.dataset == 'fill50k':
         from test_imgs import fill50k
-        dataset = fill50k.get_dataset(args.batch_size, args.img_size)
-        dataset_length = 50000
+        train_dataset, test_dataset = fill50k.get_dataset(args.batch_size, args.img_size)
     else:
         from test_imgs import facesynthetics
-        dataset = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
-        dataset_length = 50000  # TODO
-
-    # split dataset into train and test
-    train_size = int(dataset_length * 0.08)
-    train_dataset = dataset.take(train_size)
-    test_dataset = dataset.skip(train_size)
+        train_dataset, test_dataset = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
+
+    # # build model
+    # dummy_input_shape = (args.batch_size, args.img_size, args.img_size, 3)
+    # model.build(dummy_input_shape)
+
+    # load weights if available
+    if args.resume:
+        print("Loading weights...")
+        try:
+            model.control_model.load_weights(f"{args.save_dir}/controlnet.weights.h5")
+            model.diffuser.load_weights(f"{args.save_dir}/unet.weights.h5")
+            print("Loaded weights successfully.")
+        except Exception as e:
+            print("Failed to load weights:", e)
+    else:
+        print("Loading original weights...")
+        try:
+            file = keras.utils.get_file(
+                                    origin="https://huggingface.co/fchollet/stable-diffusion/resolve/main/kcv_diffusion_model.h5",  # noqa: E501
+                                    file_hash="8799ff9763de13d7f30a683d653018e114ed24a6a819667da4f5ee10f9e805fe",  # noqa: E501
+            )
+            model.control_model.load_weights(file, by_name=True, skip_mismatch=True)
+            model.diffuser.load_weights(file, by_name=True, skip_mismatch=True)
+            print("Loaded weights successfully.")
+        except Exception as e:
+            print("Failed to load weights:", e)
+            print("Train from scratch.")
+
 
     print("----------Start Training----------")
 
     losses = []
 
-    for _ in range(args.epochs):
-        for batch in train_dataset.take(1):
-            losses.append(model.train_step(batch)['loss'])
+    # for epoch in range(args.epochs):
+    #     for batch in train_dataset.take(1):
+    #         losses.append(model.train_step(batch)['loss'])
+
+    for epoch in range(args.epochs):
+        epoch_loss = 0
+        for batch in train_dataset:
+            loss = model.train_step(batch)
+            epoch_loss += loss['loss']
+            print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {loss['loss']:.6f}")
+        avg_epoch_loss = epoch_loss / len(train_dataset)
+        losses.append(avg_epoch_loss)
+        print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
+        
+        # Save the model weights after each epoch
+        try:
+            model.control_model.save_weights(f"{args.save_dir}/controlnet.weights.h5")
+            model.diffuser.save_weights(f"{args.save_dir}/unet.weights.h5")
+        except Exception as e:
+            print("Failed to save weights:", e)
+
+        # early stopping
+        if avg_epoch_loss < 0.01:
+            print("Early stopping...")
+            break
+
+        
     
     print("----------Finish Training----------")
 
-    # epochs = list(range(1, len(losses) + 1))
-    # plt.plot(epochs, losses, label='Loss')
-    # plt.title('Training Loss over Epochs')
-    # plt.xlabel('Epochs')
-    # plt.ylabel('Loss')
-    # plt.legend()
-    # plt.show()
-    # print('----------Finish graphing-----------')
+    epochs = list(range(1, len(losses) + 1))
+    plt.plot(epochs, losses, label='Loss')
+    plt.title('Training Loss over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.savefig(f"{args.save_dir}/loss_curve.png")
+    plt.clf()
+    plt.cla()
+    plt.close('all')
 
-    print('----------Start Testing----------')
-    captions = [data['txt'] for data in test_dataset.take(1)]
-    generated_images_sd = []
-    stable_diffusion = keras_cv.models.StableDiffusion(img_width=512, img_height=512)
-    print('Created stable diffusion')
-    for caption in captions:
-        if isinstance(caption, tf.Tensor):
-            caption_str = caption.numpy()[0]
-            if isinstance(caption_str, bytes):
-                caption_str = caption_str.decode("utf-8")
-        else:
-            caption_str = caption
-        generated_images_sd.append(stable_diffusion.text_to_image(caption_str, batch_size=args.batch_size))
-    generated_images_sd = resize_images(generated_images_sd)
-    print('Finish inference in sd')
-    generated_images_controlnet = resize_images(model.predict(test_dataset.take(1)))
-    print('Finish inference in controlnet')
+    print("----------Image Saved----------")
 
-    save_images(generated_images_sd, save_dir="outputs/sd", prefix="sd")
+    # captions = [data['txt'] for data in test_dataset]
+    # captions = []
+    # for batch in test_dataset:
+    #     captions.extend(batch['txt'].numpy().tolist())
+    # captions = [c.decode('utf-8') if isinstance(c, bytes) else c for c in captions]
+    # generated_images_sd = []
+    # stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
+
+    # for caption in captions:
+    #     generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=args.batch_size))
+
+    # save_images(generated_images_sd, save_dir="outputs/sd", prefix="sd")
     save_images(generated_images_controlnet, save_dir="outputs/controlnet", prefix="controlnet")
 
-    clip_score_sd = calculate_clip_score(generated_images_sd, captions)
-    clip_score_controlnet = calculate_clip_score(generated_images_controlnet, captions)
-    print("CLIP Score:")
-    print("Stable Diffusion: " + str(clip_score_sd))
-    print("Control Net: " + str(clip_score_controlnet))
+    # clip_score_sd = calculate_clip_score(generated_images_sd, captions)
+    # clip_score_controlnet = calculate_clip_score(generated_images_controlnet, captions)
+    # print("CLIP Score:")
+    # print("Stable Diffusion: " + str(clip_score_sd))
+    # print("Control Net: " + str(clip_score_controlnet))
 
-    real_images = [data['jpg'] for data in test_dataset]
-    fid_score_sd = calculate_fid_score(real_images, generated_images_sd)
-    fid_score_controlnet = calculate_fid_score(real_images, generated_images_controlnet)
-    print("FID Score:")
-    print("Stable Diffusion: " + str(fid_score_sd))
-    print("Control Net: " + str(fid_score_controlnet))
+    # real_images = [data['jpg'] for data in test_dataset]
+    # fid_score_sd = calculate_fid_score(real_images, generated_images_sd)
+    # fid_score_controlnet = calculate_fid_score(real_images, generated_images_controlnet)
+    # print("FID Score:")
+    # print("Stable Diffusion: " + str(fid_score_sd))
+    # print("Control Net: " + str(fid_score_controlnet))
 
 def resize_images(images, target_size=(299, 299)):
     images = tf.convert_to_tensor(images, dtype=tf.float32)
@@ -103,6 +149,9 @@ def resize_images(images, target_size=(299, 299)):
     return resized
 
 def calculate_clip_score(images, captions):
+    if isinstance(images, tf.Tensor):
+        images = images.numpy()
+
     inputs = clip_tokenizer(
         text=captions,
         images=images,
@@ -134,6 +183,9 @@ def get_activations(images: tf.Tensor, batch_size=32):
     return activations
 
 def calculate_fid_score(real_images, generated_images):
+    real_images = tf.concat(real_images, axis=0)
+    generated_images = tf.concat(generated_images, axis=0)
+
     # d^2 = ||mu_1 – mu_2||^2 + Tr(c_1 + c_2 – 2*sqrt(c_1*c_2))
     act_1 = get_activations(real_images)
     act_2 = get_activations(generated_images)

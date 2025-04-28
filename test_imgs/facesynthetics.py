@@ -1,8 +1,6 @@
 import tensorflow as tf
-from datasets import load_dataset, load_from_disk
-from PIL import Image
+from datasets import load_dataset
 import numpy as np
-import io
 
 hf_dataset = load_dataset("multimodalart/facesyntheticsspigacaptioned", split='train')
 
@@ -24,7 +22,7 @@ def preprocess_example(example, img_size):
 
 def generator(img_size):
     for example in hf_dataset:
-        yield preprocess_example(example)
+        yield preprocess_example(example, img_size)
 
 
 def get_dataset(batch_size=8, img_size=256):
@@ -39,8 +37,24 @@ def get_dataset(batch_size=8, img_size=256):
         output_signature=output_signature
     )
 
-    dataset = dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
-    return dataset
+    dataset_length = len(hf_dataset)
+
+    # print(f"Preprocessing {dataset_length} examples...")
+
+    # split dataset into train and test
+    train_size = int(dataset_length * 0.8)
+    train_data = dataset.take(train_size)
+    test_data = dataset.skip(train_size)
+
+    # save the dataset to disk
+    train_data = train_data.cache()
+    test_data = test_data.cache()
+
+    # print(f"Preprocessing completed.")
+
+    train_data = train_data.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+
+    return train_data, test_data
 
 # Usage example
 # dataset = get_dataset()

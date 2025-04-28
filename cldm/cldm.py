@@ -1,4 +1,4 @@
-from tensorflow import keras
+import keras
 import keras_cv
 
 from cldm.diffuser import ResBlock, SpatialTransformer, Upsample
@@ -13,6 +13,8 @@ MAX_PROMPT_LENGTH = 77
 class ControlNet(keras.Model):
     def __init__(
             self,
+            img_height,
+            img_width,
             download_weights=True, 
         ):
 
@@ -28,74 +30,71 @@ class ControlNet(keras.Model):
 
         # Compute hint embedding. See cldm/cldm.py Line 147.
         self.hint_embedding_model = tf.keras.Sequential([
-            # keras.layers.Input(hint_image_size, name="hint"),
-            PaddedConv2D(filters=16, kernel_size=3, strides=1, padding=1),
-            keras.layers.Activation("swish"),
-            PaddedConv2D(filters=16, kernel_size=3, strides=1, padding=1),
-            keras.layers.Activation("swish"),
-            PaddedConv2D(filters=32, kernel_size=3, strides=2, padding=1),
-            keras.layers.Activation("swish"),
-            PaddedConv2D(filters=32, kernel_size=3, strides=1, padding=1),
-            keras.layers.Activation("swish"),
-            PaddedConv2D(filters=96, kernel_size=3, strides=2, padding=1),
-            keras.layers.Activation("swish"),
-            PaddedConv2D(filters=96, kernel_size=3, strides=1, padding=1),
-            keras.layers.Activation("swish"),
-            PaddedConv2D(filters=256, kernel_size=3, strides=2, padding=1),
-            keras.layers.Activation("swish"),
-            ZeroPaddedConv2D(filters=320, kernel_size=3, strides=1, padding=1),
+            PaddedConv2D(filters=16, kernel_size=3, strides=1, padding=1, name='hint_conv2d_1'),
+            keras.layers.Activation("swish", name='hint_swish_1'),
+            PaddedConv2D(filters=16, kernel_size=3, strides=1, padding=1, name='hint_conv2d_2'),
+            keras.layers.Activation("swish", name='hint_swish_2'),
+            PaddedConv2D(filters=32, kernel_size=3, strides=2, padding=1, name='hint_conv2d_3'),
+            keras.layers.Activation("swish", name='hint_swish_3'),
+            PaddedConv2D(filters=32, kernel_size=3, strides=1, padding=1, name='hint_conv2d_4'),
+            keras.layers.Activation("swish", name='hint_swish_4'),
+            PaddedConv2D(filters=96, kernel_size=3, strides=2, padding=1, name='hint_conv2d_5'),
+            keras.layers.Activation("swish", name='hint_swish_5'),
+            PaddedConv2D(filters=96, kernel_size=3, strides=1, padding=1, name='hint_conv2d_6'),
+            keras.layers.Activation("swish", name='hint_swish_6'),
+            PaddedConv2D(filters=256, kernel_size=3, strides=2, padding=1, name='hint_conv2d_7'),
+            keras.layers.Activation("swish", name='hint_swish_7'),
+            ZeroPaddedConv2D(filters=320, kernel_size=3, strides=1, padding=1, name='hint_zeroconv2d_8'),
         ])
 
         # self.layers is a reserved field
         self.control_layers = [
-            # keras.layers.Input((img_height // 8, img_width // 8, 4), name="latent"),
             # Downsampling flow
             PaddedConv2D(320, kernel_size=3, padding=1),
-            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_1'),  # Control
             ### SD Encoder Block 1
             ResBlock(320),
             SpatialTransformer(8, 40, fully_connected=False),
-            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_2'),  # Control
             ResBlock(320),
             SpatialTransformer(8, 40, fully_connected=False),
-            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_3'),  # Control
             PaddedConv2D(320, 3, strides=2, padding=1),
-            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_4'),  # Control
             ### SD Encoder Block 2
             ResBlock(640),
             SpatialTransformer(8, 80, fully_connected=False),
-            ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_5'),  # Control
             ResBlock(640),
             SpatialTransformer(8, 80, fully_connected=False),
-            ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_6'),  # Control
             PaddedConv2D(640, 3, strides=2, padding=1),
-            ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_7'),  # Control
             ### SD Encoder Block 3
             ResBlock(1280),
             SpatialTransformer(8, 160, fully_connected=False),
-            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_8'),  # Control
             ResBlock(1280),
             SpatialTransformer(8, 160, fully_connected=False),
-            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_9'),  # Control
             PaddedConv2D(1280, 3, strides=2, padding=1),
-            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_10'),  # Control
             ### SD Encoder Block
             ResBlock(1280),
-            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_11'),  # Control
             ResBlock(1280),
-            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_12'),  # Control
             # Middle flow
             ResBlock(1280),
             SpatialTransformer(8, 160, fully_connected=False),
             ResBlock(1280),
-            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0),  # Control
+            ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_13'),  # Control
         ]
 
-
-    def __call__(self, context, t_embed_input, latent, control):
+    def __call__(self, inputs):
+        context, t_embed_input, latent, control = inputs
         t_emb = self.time_embedding_model(t_embed_input)
         guided_hint = self.hint_embedding_model(control)
-        context = tf.stack(tf.squeeze(context, axis=1), axis=0)
 
         index = 0
         final_output = []
@@ -141,7 +140,6 @@ class ControlNet(keras.Model):
 class ControlledUnetModel(keras.Model):
     def __init__(
         self,
-        download_weights=True, 
     ):
         super().__init__()
 
@@ -154,32 +152,32 @@ class ControlledUnetModel(keras.Model):
 
         self.unet_layers = [
             # Downsampling flow
-            PaddedConv2D(320, kernel_size=3, padding=1, trainable=False),
+            PaddedConv2D(320, kernel_size=3, padding=1, trainable=False, name='lock_1'),
             ### SD Encoder Block 1
-            ResBlock(320, trainable=False),
-            SpatialTransformer(8, 40, fully_connected=False, trainable=False),
-            ResBlock(320, trainable=False),
-            SpatialTransformer(8, 40, fully_connected=False, trainable=False),
-            PaddedConv2D(320, 3, strides=2, padding=1, trainable=False),
+            ResBlock(320, trainable=False, name='lock_2'),
+            SpatialTransformer(8, 40, fully_connected=False, trainable=False, name='lock_3'),
+            ResBlock(320, trainable=False, name='lock_4'),
+            SpatialTransformer(8, 40, fully_connected=False, trainable=False, name='lock_5'),
+            PaddedConv2D(320, 3, strides=2, padding=1, trainable=False, name='lock_6'),
             ### SD Encoder Block 2
-            ResBlock(640, trainable=False),
-            SpatialTransformer(8, 80, fully_connected=False, trainable=False),
-            ResBlock(640, trainable=False),
-            SpatialTransformer(8, 80, fully_connected=False, trainable=False),
-            PaddedConv2D(640, 3, strides=2, padding=1, trainable=False),
+            ResBlock(640, trainable=False, name='lock_7'),
+            SpatialTransformer(8, 80, fully_connected=False, trainable=False, name='lock_8'),
+            ResBlock(640, trainable=False, name='lock_9'),
+            SpatialTransformer(8, 80, fully_connected=False, trainable=False, name='lock_10'),
+            PaddedConv2D(640, 3, strides=2, padding=1, trainable=False, name='lock_11'),
             ### SD Encoder Block 3
-            ResBlock(1280, trainable=False),
-            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
-            ResBlock(1280, trainable=False),
-            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
-            PaddedConv2D(1280, 3, strides=2, padding=1, trainable=False),
+            ResBlock(1280, trainable=False, name='lock_12'),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_13'),
+            ResBlock(1280, trainable=False, name='lock_14'),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_15'),
+            PaddedConv2D(1280, 3, strides=2, padding=1, trainable=False, name='lock_16'),
             ### SD Encoder Block
-            ResBlock(1280, trainable=False),
-            ResBlock(1280, trainable=False),
+            ResBlock(1280, trainable=False, name='lock_17'),
+            ResBlock(1280, trainable=False, name='lock_18'),
             # Middle flow
-            ResBlock(1280, trainable=False),
-            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
-            ResBlock(1280, trainable=False),
+            ResBlock(1280, trainable=False, name='lock_1'),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_19'),
+            ResBlock(1280, trainable=False, name='lock_20'),
             # Upsampling flow
             ### SD Decoder
             keras.layers.Concatenate(),
@@ -227,16 +225,9 @@ class ControlledUnetModel(keras.Model):
             PaddedConv2D(4, kernel_size=3, padding=1)
         ]
 
-        # if download_weights:
-        #     diffusion_model_weights_fpath = keras.utils.get_file(
-        #         origin="https://huggingface.co/fchollet/stable-diffusion/resolve/main/kcv_diffusion_model.h5",  # noqa: E501
-        #         file_hash="8799ff9763de13d7f30a683d653018e114ed24a6a819667da4f5ee10f9e805fe",  # noqa: E501
-        #     )
-        #     self.load_weights(diffusion_model_weights_fpath)
-
-    def __call__(self, context, t_embed_input, latent, control):
+    def __call__(self, inputs):
+        context, t_embed_input, latent, control = inputs
         t_emb = self.time_embedding_model(t_embed_input)
-        context = tf.stack(tf.squeeze(context, axis=1), axis=0)
 
         index = 0
         output = []
@@ -322,9 +313,42 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         self.noise_scheduler = keras_cv.models.stable_diffusion.NoiseScheduler()
         self.max_grad_norm = 1.0
 
-        self.control_model = ControlNet()
+        self.control_model = ControlNet(img_height, img_width)
         self.control_scales = [1.0] * 13
+
+        self.diffuser = ControlledUnetModel()
+
         self.optimizer = optimizer
+
+
+    def build(self, input_shape):
+        batch_size = input_shape[0] if input_shape[0] is not None else 1
+        img_height = input_shape[1]
+        img_width = input_shape[2]
+
+        # Prepare dummy inputs manually
+        latent_shape = (batch_size, img_height // 8, img_width // 8, 4)
+        latents = tf.zeros(latent_shape, dtype=tf.float32)
+
+        context_shape = (batch_size, MAX_PROMPT_LENGTH, 768) # TODO
+        dummy_context = tf.zeros(context_shape, dtype=tf.float32)
+
+        timestep_shape = (batch_size,)
+        dummy_timesteps = tf.zeros(timestep_shape, dtype=tf.int32)
+        timestep_emb = timestep_embedding(dummy_timesteps)
+
+        control_shape = (batch_size, img_height, img_width, 3)
+        controls = tf.zeros(control_shape, dtype=tf.float32)
+
+        # Build control model
+        control_outputs = self.control_model([dummy_context, timestep_emb, latents, controls])
+        control_outputs = [c * scale for c, scale in zip(control_outputs, self.control_scales)]
+
+        # Build diffusion model
+        _ = self.diffuser([dummy_context, timestep_emb, latents, control_outputs])
+
+        self.control_model.summary()
+        self.diffuser.summary()
 
     def train_step(self, inputs):
         latents, encoded_text, controls = self.get_input(inputs)
@@ -342,9 +366,15 @@ class ControlSDB(keras_cv.models.StableDiffusion):
             timestep_embedding_not_trainnable = tf.stop_gradient(timestep_embedding(timesteps))
             timestep_embedding_trainnable = timestep_embedding(timesteps)
 
-            control = self.control_model(encoded_text, timestep_embedding_trainnable, noisy_latents, controls)
+            if isinstance(encoded_text, list):
+                encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
+            else:
+                encoded_text = tf.convert_to_tensor(encoded_text)
+            
+            control = self.control_model([encoded_text, timestep_embedding_trainnable, noisy_latents, controls])
             control = [c * scale for c, scale in zip(control, self.control_scales)]
-            eps = self.diffusion_model(encoded_text, timestep_embedding_not_trainnable, noisy_latents, control)
+
+            eps = self.diffuser([encoded_text, timestep_embedding_not_trainnable, noisy_latents, control])
 
             loss_fn = tf.keras.losses.MeanSquaredError(
                 reduction='sum_over_batch_size',
@@ -352,7 +382,7 @@ class ControlSDB(keras_cv.models.StableDiffusion):
             )
             loss = loss_fn(target, eps)
         
-        trainable_vars = self.control_model.trainable_variables + self.diffusion_model.trainable_variables
+        trainable_vars = self.control_model.trainable_variables + self.diffuser.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
         gradients = [tf.clip_by_norm(g, self.max_grad_norm) for g in gradients]
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
@@ -370,10 +400,15 @@ class ControlSDB(keras_cv.models.StableDiffusion):
             timestep = tf.fill([batch_size], self.noise_scheduler.inference_timesteps[step])
             timestep_emb = timestep_embedding(timestep)
             
-            control = self.control_model(encoded_text, timestep_emb, noisy_latents, control)
+            if isinstance(encoded_text, list):
+                encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
+            else:
+                encoded_text = tf.convert_to_tensor(encoded_text)
+
+            control = self.control_model([encoded_text, timestep_emb, noisy_latents, control])
             control = [c * scale for c, scale in zip(control, self.control_scales)]
 
-            pred_noise = self._diffusion_model(encoded_text, timestep_emb, noisy_latents, control)
+            pred_noise = self.diffuser([encoded_text, timestep_emb, noisy_latents, control])
 
             noisy_latents = self.noise_scheduler.step(pred_noise, timestep, noisy_latents)
 
@@ -395,15 +430,3 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         controls = inputs["hint"]
 
         return latents, encoded_text, controls
-    
-    @property
-    def diffusion_model(self):
-        """diffusion_model returns the diffusion model with pretrained weights.
-        Can be overriden for tasks where the diffusion model needs to be
-        modified.
-        """
-        if self._diffusion_model is None:
-            self._diffusion_model = ControlledUnetModel()
-            # if self.jit_compile:
-            #     self._diffusion_model.compile(jit_compile=True)
-        return self._diffusion_model
