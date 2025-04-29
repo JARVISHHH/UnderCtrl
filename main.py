@@ -64,14 +64,19 @@ def main():
     continue_in_batches = False
     start_epoch = None
     best_epoch_loss = None
-    losses = None
+    epoch_losses = None
+    batch_losses = None
     if args.resume and args.load_current:
         print("Loading current weights...")
         try:
             model.control_model.load_weights(f"{args.load_dir}/controlnet_current.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_current.weights.h5")
             with open(f"{args.load_dir}/info_current.pkl", "rb") as f:
-                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
+                info = pickle.load(f)
+                if len(info) == 6:
+                    start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses = info
+                else:
+                    start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses, batch_losses = info
                 continue_in_batches = True
             print(f"Loaded current weights successfully.")
         except Exception as e:
@@ -82,7 +87,11 @@ def main():
             model.control_model.load_weights(f"{args.load_dir}/controlnet_best.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_best.weights.h5")
             with open(f"{args.load_dir}/info_best.pkl", "rb") as f:
-                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
+                info = pickle.load(f)
+                if len(info) == 6:
+                    start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses = info
+                else:
+                    start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses, batch_losses = info
                 continue_in_batches = True
             print("Loaded best weights successfully.")
         except Exception as e:
@@ -93,7 +102,11 @@ def main():
             model.control_model.load_weights(f"{args.load_dir}/controlnet_best_epoch.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_best_epoch.weights.h5")
             with open(f"{args.load_dir}/info_best_epoch.pkl", "rb") as f:
-                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
+                info = pickle.load(f)
+                if len(info) == 6:
+                    start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses = info
+                else:
+                    start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses, batch_losses = info
             print("Loaded best epoch weights successfully.")
         except Exception as e:
             print("Failed to load best epoch weights:", e)
@@ -103,7 +116,11 @@ def main():
             model.control_model.load_weights(f"{args.load_dir}/controlnet_epoch_{args.load_epoch}.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_epoch_{args.load_epoch}.weights.h5")
             with open(f"{args.load_dir}/info_{args.load_epoch}.pkl", "rb") as f:
-                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
+                info = pickle.load(f)
+                if len(info) == 6:
+                    start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses = info
+                else:
+                    start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses, batch_losses = info
             print("Loaded epoch weights successfully.")
         except Exception as e:
             print("Failed to load epoch weights:", e)
@@ -124,8 +141,10 @@ def main():
     if args.train:
         print("----------Start Training----------")
 
-        if losses is None:
-            losses = []
+        if epoch_losses is None:
+            epoch_losses = []
+        if batch_losses is None:
+            batch_losses = []
 
         # Uncomment the following lines to test training the model with a single batch
         # for epoch in range(args.epochs):
@@ -151,6 +170,7 @@ def main():
                     continue
 
                 loss = model.train_step(batch)
+                batch_losses.append(loss['loss'])
                 epoch_loss += loss['loss']
                 batch_num += 1
                 print(f"Epoch {epoch+1}/{args.epochs}, Batch {batch_num}/{dataset_length // args.batch_size} Loss: {loss['loss']:.6f}")
@@ -161,7 +181,7 @@ def main():
                         model.control_model.save_weights(f"{args.save_dir}/controlnet_current.weights.h5")
                         model.diffuser.save_weights(f"{args.save_dir}/unet_current.weights.h5")
                         with open(f"{args.save_dir}/info_current.pkl", "wb") as f:
-                            pickle.dump([epoch, batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses], f)
+                            pickle.dump([epoch, batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses, batch_losses], f)
                         print(f"Saved current weights for epoch {epoch+1}, batch {batch_num}.")
                     except Exception as e:
                         print("Failed to save weights:", e)
@@ -171,13 +191,13 @@ def main():
                         model.control_model.save_weights(f"{args.save_dir}/controlnet_best.weights.h5")
                         model.diffuser.save_weights(f"{args.save_dir}/unet_best.weights.h5")
                         with open(f"{args.save_dir}/info_best.pkl", "wb") as f:
-                            pickle.dump([epoch, batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses], f)
+                            pickle.dump([epoch, batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses, batch_losses], f)
                         print(f"Saved best weights for epoch {epoch+1}, batch {batch_num}.")
                     except Exception as e:
                         print("Failed to save weights:", e)
 
             avg_epoch_loss = epoch_loss / len(train_dataset)
-            losses.append(avg_epoch_loss)
+            epoch_losses.append(avg_epoch_loss)
             print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
             
             # Save the model weights after each epoch
@@ -185,7 +205,7 @@ def main():
                 model.control_model.save_weights(f"{args.save_dir}/controlnet_epoch_{epoch+1}.weights.h5")
                 model.diffuser.save_weights(f"{args.save_dir}/unet_epoch_{epoch+1}.weights.h5")
                 with open(f"{args.save_dir}/info_{epoch+1}.pkl", "wb") as f:
-                    pickle.dump([epoch + 1, 0, 0, 0, 0, losses], f)
+                    pickle.dump([epoch + 1, 0, 0, 0, 0, epoch_losses, batch_losses], f)
                 print(f"Saved weights for epoch {epoch+1}.")
             except Exception as e:
                 print("Failed to save weights:", e)
@@ -196,7 +216,7 @@ def main():
                     model.control_model.save_weights(f"{args.save_dir}/controlnet_best_epoch.weights.h5")
                     model.diffuser.save_weights(f"{args.save_dir}/unet_best_epoch.weights.h5")
                     with open(f"{args.save_dir}/info_best_epoch.pkl", "wb") as f:
-                        pickle.dump([epoch + 1, 0, 0, 0, 0, losses], f)
+                        pickle.dump([epoch + 1, 0, 0, 0, 0, epoch_losses, batch_losses], f)
                     print(f"Saved best weights for epoch {epoch+1}.")
                 except Exception as e:
                     print("Failed to save weights:", e)
@@ -204,8 +224,8 @@ def main():
         print("----------Finish Training----------")
 
     if args.save_imgs:
-        epochs = list(range(1, len(losses) + 1))
-        plt.plot(epochs, losses, label='Loss')
+        epochs = list(range(1, len(epoch_losses) + 1))
+        plt.plot(epochs, epoch_losses, label='Loss')
         plt.title('Training Loss over Epochs')
         plt.xlabel('Epochs')
         plt.ylabel('Loss')
