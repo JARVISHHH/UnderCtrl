@@ -306,9 +306,8 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         optimizer,
         img_height=64,
         img_width=64,
-        jit_compile=True,
     ):
-        super().__init__(img_height, img_width, jit_compile)
+        super().__init__(img_height, img_width)
 
         self.noise_scheduler = keras_cv.models.stable_diffusion.NoiseScheduler()
         self.max_grad_norm = 1.0
@@ -352,7 +351,6 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         self.control_model.summary()
         self.diffuser.summary()
 
-    @tf.function(jit_compile=True)
     def train_step(self, inputs):
         latents, encoded_text, controls = self.get_input(inputs)
         batch_size = tf.shape(latents)[0]
@@ -399,7 +397,6 @@ class ControlSDB(keras_cv.models.StableDiffusion):
 
         return { 'loss': loss }
 
-    @tf.function(jit_compile=True)
     def predict(self, inputs):
         latents, encoded_text, control = self.get_input(inputs)
         batch_size = tf.shape(latents)[0]
@@ -445,7 +442,6 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         images = tf.clip_by_value(images, -1.0, 1.0)
         return (images + 1.0) * 127.5
 
-    @tf.function(jit_compile=True)
     def get_input(self, inputs):
         # TODO: should images be rearranged? from (b h w c) to (b c h w)?
         # jpg refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/ldm/models/diffusion/ddpm.py#L419
