@@ -12,12 +12,15 @@ import keras
 import numpy as np
 from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
 import tensorflow_probability as tfp
+from transformers import TFCLIPModel, CLIPProcessor
 from PIL import Image
 import os
 
 import matplotlib.pyplot as plt
 
 inception_model = InceptionV3(include_top=False, weights='imagenet', pooling='avg')
+clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=False)
+clip_model = TFCLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train and Test ControlNet")
