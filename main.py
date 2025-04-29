@@ -62,6 +62,9 @@ def main():
 
     # load weights if available
     continue_in_batches = False
+    start_epoch = None
+    best_epoch_loss = None
+    losses = None
     if args.resume and args.load_current:
         print("Loading current weights...")
         try:
