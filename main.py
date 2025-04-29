@@ -1,7 +1,7 @@
 # train only: python main.py --dataset <dataset> --epochs <epochs> --train --save_imgs
 # resume training: python main.py --dataset <dataset> --epochs <epochs> --resume --load_epoch <load_epoch> --train --save_imgs
 # resume training: python main.py --dataset <dataset> --epochs <epochs> --resume --load_current --train --save_imgs
-# test only: python main.py --dataset <dataset> --resume --load_best --test
+# test only: python main.py --dataset <dataset> --resume --load_best_epoch --test
 # keep batch size same for train and test
 
 import argparse
@@ -33,6 +33,9 @@ def parse_args():
     parser.add_argument('--resume', action='store_true') # Set to True to resume training
     parser.add_argument('--load_dir', type=str, default='./checkpoints')
     parser.add_argument('--load_epoch', type=int, default=0, help='Epoch to load weights from')
+    parser.add_argument('--load_best', action='store_true', help='Load best weights') # Set to True to load best weights
+    parser.add_argument('--load_current', action='store_true', help='Load current weights') # Set to True to load current weights
+    parser.add_argument('--load_best_epoch', type=int, default=0, help='Epoch to load best weights from')
     parser.add_argument('--train', action='store_true', help='Test the model') # Set to True to train the model
     parser.add_argument('--save_imgs', action='store_true', help='Save images') # Set to True to save images
     parser.add_argument('--test', action='store_true', help='Test the model') # Set to True to test the model
@@ -73,6 +76,14 @@ def main():
             print("Loaded best weights successfully.")
         except Exception as e:
             print("Failed to load best weights:", e)
+    elif args.resume and args.load_best_epoch:
+        print("Loading best epoch weights...")
+        try:
+            model.control_model.load_weights(f"{args.load_dir}/controlnet_best_epoch.weights.h5")
+            model.diffuser.load_weights(f"{args.load_dir}/unet_best_epoch.weights.h5")
+            print("Loaded best epoch weights successfully.")
+        except Exception as e:
+            print("Failed to load best epoch weights:", e)
     elif args.resume and args.load_epoch>0:
         print("Loading epoch weights...")
         try:
