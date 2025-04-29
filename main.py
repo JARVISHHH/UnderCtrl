@@ -14,6 +14,7 @@ from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_i
 import tensorflow_probability as tfp
 from transformers import TFCLIPModel, CLIPProcessor
 from PIL import Image
+import pickle
 import os
 
 import matplotlib.pyplot as plt
@@ -60,11 +61,15 @@ def main():
     model.build(dummy_input_shape)
 
     # load weights if available
+    continue_in_batches = False
     if args.resume and args.load_current:
         print("Loading current weights...")
         try:
             model.control_model.load_weights(f"{args.load_dir}/controlnet_current.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_current.weights.h5")
+            with open(f"{args.load_dir}/info_current.pkl", "rb") as f:
+                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
+                continue_in_batches = True
             print(f"Loaded current weights successfully.")
         except Exception as e:
             print("Failed to load weights:", e)
@@ -73,6 +78,9 @@ def main():
         try:
             model.control_model.load_weights(f"{args.load_dir}/controlnet_best.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_best.weights.h5")
+            with open(f"{args.load_dir}/info_best.pkl", "rb") as f:
+                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
+                continue_in_batches = True
             print("Loaded best weights successfully.")
         except Exception as e:
             print("Failed to load best weights:", e)
@@ -81,6 +89,8 @@ def main():
         try:
             model.control_model.load_weights(f"{args.load_dir}/controlnet_best_epoch.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_best_epoch.weights.h5")
+            with open(f"{args.load_dir}/info_best_epoch.pkl", "rb") as f:
+                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
             print("Loaded best epoch weights successfully.")
         except Exception as e:
             print("Failed to load best epoch weights:", e)
@@ -89,6 +99,8 @@ def main():
         try:
             model.control_model.load_weights(f"{args.load_dir}/controlnet_epoch_{args.load_epoch}.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_epoch_{args.load_epoch}.weights.h5")
+            with open(f"{args.load_dir}/info_{args.load_epoch}.pkl", "rb") as f:
+                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
             print("Loaded epoch weights successfully.")
         except Exception as e:
             print("Failed to load epoch weights:", e)
@@ -108,7 +120,9 @@ def main():
 
     if args.train:
         print("----------Start Training----------")
-        losses = []
+
+        if losses is None:
+            losses = []
 
         # Uncomment the following lines to test training the model with a single batch
         # for epoch in range(args.epochs):
@@ -116,13 +130,23 @@ def main():
         #         losses.append(model.train_step(batch)['loss'])
         #         print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {losses[-1]:.6f}")
 
-        start_epoch = args.load_epoch if args.resume else 0
-        best_epoch_loss = 0.01
-        for epoch in range(start_epoch, start_epoch+args.epochs):
-            epoch_loss = 0
-            best_batch_loss = 0.01
+        if start_epoch is None:
+            start_epoch = 0
+        if best_epoch_loss is None:
+            best_epoch_loss = 0.01
+        for epoch in range(start_epoch, start_epoch + args.epochs):
+            if not continue_in_batches:
+                epoch_loss = 0
+                best_batch_loss = 0.01
+                start_batch_num = 0
+            continue_in_batches = False
+
             batch_num = 0
             for batch in train_dataset:
+                if batch_num < start_batch_num:
+                    batch_num += 1
+                    continue
+
                 loss = model.train_step(batch)
                 epoch_loss += loss['loss']
                 batch_num += 1
@@ -133,6 +157,8 @@ def main():
                     try:
                         model.control_model.save_weights(f"{args.save_dir}/controlnet_current.weights.h5")
                         model.diffuser.save_weights(f"{args.save_dir}/unet_current.weights.h5")
+                        with open(f"{args.save_dir}/info_current.pkl", "wb") as f:
+                            pickle.dump([epoch, batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses], f)
                         print(f"Saved current weights for epoch {epoch+1}, batch {batch_num}.")
                     except Exception as e:
                         print("Failed to save weights:", e)
@@ -141,6 +167,8 @@ def main():
                     try:
                         model.control_model.save_weights(f"{args.save_dir}/controlnet_best.weights.h5")
                         model.diffuser.save_weights(f"{args.save_dir}/unet_best.weights.h5")
+                        with open(f"{args.save_dir}/info_best.pkl", "wb") as f:
+                            pickle.dump([epoch, batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses], f)
                         print(f"Saved best weights for epoch {epoch+1}, batch {batch_num}.")
                     except Exception as e:
                         print("Failed to save weights:", e)
@@ -153,6 +181,8 @@ def main():
             try:
                 model.control_model.save_weights(f"{args.save_dir}/controlnet_epoch_{epoch+1}.weights.h5")
                 model.diffuser.save_weights(f"{args.save_dir}/unet_epoch_{epoch+1}.weights.h5")
+                with open(f"{args.save_dir}/info_{epoch+1}.pkl", "wb") as f:
+                    pickle.dump([epoch + 1, 0, 0, 0, 0, losses], f)
                 print(f"Saved weights for epoch {epoch+1}.")
             except Exception as e:
                 print("Failed to save weights:", e)
@@ -162,6 +192,8 @@ def main():
                 try:
                     model.control_model.save_weights(f"{args.save_dir}/controlnet_best_epoch.weights.h5")
                     model.diffuser.save_weights(f"{args.save_dir}/unet_best_epoch.weights.h5")
+                    with open(f"{args.save_dir}/info_best_epoch.pkl", "wb") as f:
+                        pickle.dump([epoch + 1, 0, 0, 0, 0, losses], f)
                     print(f"Saved best weights for epoch {epoch+1}.")
                 except Exception as e:
                     print("Failed to save weights:", e)
