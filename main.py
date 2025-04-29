@@ -18,7 +18,7 @@ import os
 import matplotlib.pyplot as plt
 
 inception_model = InceptionV3(include_top=False, weights='imagenet', pooling='avg')
-clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=False)
+clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=False, do_rescale=False)
 clip_model = TFCLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 
 def parse_args():
@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument('--resume', action='store_true') # Set to True to resume training
     parser.add_argument('--load_dir', type=str, default='./checkpoints')
     parser.add_argument('--load_epoch', type=int, default=1)
-    parser.add_argument('--train', action='store_true', help='Test the model') # Set to True to train the model
+    parser.add_argument('--train', action='store_true', help='Train the model') # Set to True to train the model
     parser.add_argument('--save_imgs', action='store_true', help='Save images') # Set to True to save images
     parser.add_argument('--test', action='store_true', help='Test the model') # Set to True to test the model
     return parser.parse_args()
@@ -99,11 +99,11 @@ def main():
         start_epoch = args.load_epoch if args.resume else 0
         for epoch in range(start_epoch, start_epoch+args.epochs):
             epoch_loss = 0
-            for batch in train_dataset:
+            for batch in train_dataset.take(1):
                 loss = model.train_step(batch)
                 epoch_loss += loss['loss']
                 print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {loss['loss']:.6f}")
-            avg_epoch_loss = epoch_loss / len(train_dataset)
+            avg_epoch_loss = epoch_loss / dataset_length
             losses.append(avg_epoch_loss)
             print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
             
@@ -121,14 +121,6 @@ def main():
         
         print("----------Finish Training----------")
 
-    captions = [data['txt'] for data in test_dataset]
-    captions = []
-    for batch in test_dataset:
-        captions.extend(batch['txt'].numpy().tolist())
-    captions = [c.decode('utf-8') if isinstance(c, bytes) else c for c in captions]
-    generated_images_sd = []
-    stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
-
     if args.save_imgs:
         epochs = list(range(1, len(losses) + 1))
         plt.plot(epochs, losses, label='Loss')
@@ -140,39 +132,47 @@ def main():
         plt.cla()
         plt.close('all')
 
-    generated_images_controlnet = []
-    for batch in test_dataset.take(1):
-        image = model.predict(batch)
-        generated_images_controlnet.append(image)
-    generated_images_controlnet = model.predict(test_dataset)
-    # print(generated_images_controlnet)
-
-    # save_images(generated_images_sd, save_dir="outputs/sd", prefix="sd")
-    # save_images(generated_images_controlnet, save_dir="outputs/controlnet", prefix="controlnet")
-
     if args.test:
         print("----------Start Testing----------")
         captions = [data['txt'] for data in test_dataset]
+        captions = []
+        for batch in test_dataset:
+            captions.extend(batch['txt'].numpy().tolist())
+        captions = [c.decode('utf-8') if isinstance(c, bytes) else c for c in captions]
         generated_images_sd = []
         stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
 
-        for caption in captions:
-            generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=args.batch_size))
+        for caption in captions[0:args.batch_size]:
+            generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=1)[0])
+        
+        save_image_pil(np.array(generated_images_sd), "outputs/sd", "sd")
 
-        generated_images_controlnet = model.predict(test_dataset)
+        generated_images_controlnet_clip = []
+        generated_images_controlnet_fid = []
 
-        clip_score_sd = calculate_clip_score(generated_images_sd, captions)
-        clip_score_controlnet = calculate_clip_score(generated_images_controlnet, captions)
+        batch_num = 0
+        for batch in test_dataset:
+            images = model.predict(batch)
+            print(tf.shape(images))
+            generated_images_controlnet_clip.extend(images.numpy())
+            generated_images_controlnet_fid.append(images.numpy())
+            print(images.numpy())
+            save_image_pil(images.numpy(), "outputs/cn", "cn", batch_num)
+            batch_num += 1
+
+        clip_score_sd = calculate_clip_score(generated_images_sd, captions[0:args.batch_size])
+        clip_score_controlnet = calculate_clip_score(generated_images_controlnet_clip, captions[0:args.batch_size])
         print("CLIP Score:")
         print("Stable Diffusion: " + str(clip_score_sd))
         print("Control Net: " + str(clip_score_controlnet))
 
         real_images = [data['jpg'] for data in test_dataset]
-        fid_score_sd = calculate_fid_score(real_images, generated_images_sd)
-        fid_score_controlnet = calculate_fid_score(real_images, generated_images_controlnet)
+        fid_score_sd = calculate_fid_score(real_images[0:args.batch_size], tf.convert_to_tensor(generated_images_sd))
+        fid_score_controlnet = calculate_fid_score(real_images[0:args.batch_size], generated_images_controlnet_fid)
         print("FID Score:")
         print("Stable Diffusion: " + str(fid_score_sd))
         print("Control Net: " + str(fid_score_controlnet))
+                    
         print("----------Finish Testing----------")
 
 def resize_images(images, target_size=(299, 299)):
@@ -183,35 +183,43 @@ def resize_images(images, target_size=(299, 299)):
 def calculate_clip_score(images, captions):
     if isinstance(images, tf.Tensor):
         images = images.numpy()
-
-    inputs = clip_tokenizer(
-        text=captions,
-        images=images,
-        return_tensors="tf",  # Return TensorFlow tensors
-        padding=True,
-        truncation=True
-    )
-
-    outputs = clip_model(**inputs)
-
-    image_embeddings = outputs.image_embeds
-    text_embeddings = outputs.text_embeds
-
-    # Normalize embeddings
-    image_embeddings = tf.math.l2_normalize(image_embeddings, axis=1)
-    text_embeddings = tf.math.l2_normalize(text_embeddings, axis=1)
-
-    similarity = tf.reduce_sum(image_embeddings * text_embeddings, axis=1)
-
-    return tf.reduce_mean(similarity).numpy().item()
     
-def get_activations(images: tf.Tensor, batch_size=32):
+    clip_score = []
+
+    for i, image in enumerate(images):
+        if image.dtype != np.uint8:
+            image = np.clip(image, 0, 255).astype(np.uint8) / 255.0
+
+        inputs = clip_tokenizer(
+            text=captions[i],
+            images=image,
+            return_tensors="tf",
+            padding=True,
+            truncation=True
+        )
+
+        outputs = clip_model(**inputs)
+
+        image_embeddings = outputs.image_embeds
+        text_embeddings = outputs.text_embeds
+
+        # Normalize embeddings
+        image_embeddings = tf.math.l2_normalize(image_embeddings, axis=1)
+        text_embeddings = tf.math.l2_normalize(text_embeddings, axis=1)
+
+        similarity = tf.reduce_sum(image_embeddings * text_embeddings, axis=1)
+
+        clip_score.append(tf.reduce_mean(similarity).numpy().item())
+    
+    return np.mean(clip_score)
+    
+def get_activations(images: tf.Tensor):
     # Assuming InceptionV3 accepts 299x299 images
     images_resized = tf.image.resize(images, (299, 299))
-    # Assuming images are within [-1, 1]
-    images_preprocessed = preprocess_input(images_resized * 255.0)
 
-    activations = inception_model(images_preprocessed, training=False)
+    images_resized = preprocess_input(images_resized)
+
+    activations = inception_model(images_resized, training=False)
     return activations
 
 def calculate_fid_score(real_images, generated_images):
@@ -222,45 +230,41 @@ def calculate_fid_score(real_images, generated_images):
     act_1 = get_activations(real_images)
     act_2 = get_activations(generated_images)
 
-    # Mean and covariance
     mu_1 = tf.reduce_mean(act_1, axis=0)
     mu_2 = tf.reduce_mean(act_2, axis=0)
 
     c_1 = tfp.stats.covariance(act_1)
     c_2 = tfp.stats.covariance(act_2)
 
-    sqrt_c_1_mult_c_2 = tf.linalg.sqrtm(tf.matmul(c_1, c_2))
+    try:
+        sqrt_c_1_mult_c_2 = tf.linalg.sqrtm(tf.matmul(c_1, c_2))
+        if tf.math.reduce_any(tf.math.is_nan(sqrt_c_1_mult_c_2)):
+            raise ValueError("NaN in sqrtm")
+        sqrt_c_1_mult_c_2 = tf.math.real(sqrt_c_1_mult_c_2)
+    except:
+        s, u, v = tf.linalg.svd(tf.matmul(c_1, c_2))
+        sqrt_c_1_mult_c_2 = u @ tf.linalg.diag(tf.sqrt(s)) @ tf.transpose(v)
 
-    # Handle nan, complex numbers and infinity
     if tf.math.reduce_any(tf.math.is_nan(sqrt_c_1_mult_c_2)) or tf.math.reduce_any(tf.math.is_inf(sqrt_c_1_mult_c_2)):
         sqrt_c_1_mult_c_2 = tf.cast(tf.linalg.sqrtm(tf.cast(c_1 @ c_2, tf.complex64)), tf.float32)
 
-    if tf.math.reduce_any(tf.math.is_complex(sqrt_c_1_mult_c_2)):
+    if tf.math.reduce_any(tf.math.imag(sqrt_c_1_mult_c_2) != 0):
         sqrt_c_1_mult_c_2 = tf.math.real(sqrt_c_1_mult_c_2)
 
     fid = tf.reduce_sum(tf.square(mu_1 - mu_2)) + tf.linalg.trace(c_1 + c_2 - 2.0 * sqrt_c_1_mult_c_2)
     return fid.numpy().item()
 
-def save_images(images, save_dir, prefix="img"):
-    os.makedirs(save_dir, exist_ok=True)
-    for i, img in enumerate(images):
-        if isinstance(img, tf.Tensor):
-            img = img.numpy()
-        if len(img.shape) == 4:
-            img = np.squeeze(img)
-        if img.dtype == np.float32:
-            if img.min() < 0 or img.max() > 1:
-                img = (img + 1) * 127.5
-            else:
-                img = img * 255
-            img = img.astype(np.uint8)
-        
-        if len(img.shape) == 2:
-            img = np.expand_dims(img, axis=-1)
-            img = np.repeat(img, 3, axis=-1)
+def save_image_pil(image_batch, output_dir, prefix="img", batch_num=0):
+    os.makedirs(output_dir, exist_ok=True)
 
-        img_pil = Image.fromarray(img)
-        img_pil.save(os.path.join(save_dir, f"{prefix}_{i}.png"))
+    for i in range(image_batch.shape[0]):
+        img = image_batch[i]
+        if img.dtype != np.uint8:
+            if img.min() < 0 or img.max() > 255:
+                img = (img + 1) * 127.5
+            img = img.astype(np.uint8)
+    
+        Image.fromarray(img).save(os.path.join(output_dir, f"{prefix}_{batch_num + i}.png"))
 
 if __name__ == '__main__':
     main()
