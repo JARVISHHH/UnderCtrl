@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
-def load_data(img_size):
+def load_data(img_size, model):
     with open('./training/fill50k/prompt.json', 'rt') as f:
         for line in f:
             item = json.loads(line)
@@ -18,6 +18,12 @@ def load_data(img_size):
             source_filename = item['source']
             target_filename = item['target']
             prompt = item['prompt']
+            # convert to utf-8
+            prompt = prompt.decode("utf-8") if isinstance(prompt, bytes) else prompt
+            encoded_text = model.encode_text(prompt)
+
+            # convert from (1, 77, 768) to (77, 768)
+            encoded_text = np.squeeze(encoded_text, axis=0)
 
             source = cv2.imread('./training/fill50k/' + source_filename)
             target = cv2.imread('./training/fill50k/' + target_filename)
@@ -39,27 +45,27 @@ def load_data(img_size):
             yield {
                 'jpg': target,
                 'hint': source,
-                'txt': prompt
+                'txt': encoded_text
             }
 
-def get_dataset(batch_size, img_size, shuffle_seed=42):
+def get_dataset(model, batch_size, img_size, shuffle_seed=42):
     dataset = tf.data.Dataset.from_generator(
-        lambda: load_data(img_size),
+        lambda: load_data(img_size, model),
         output_signature={
             'jpg': tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
             'hint': tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
-            'txt': tf.TensorSpec(shape=(), dtype=tf.string)
+            'txt': tf.TensorSpec(shape=(77, 768), dtype=tf.float32)
         }
     )
 
-    dataset_length = 50000
+    dataset_length = 50000 # fixed
 
     # split dataset into train and test
     train_size = int(dataset_length * 0.8)
     train_dataset = dataset.take(train_size)
     test_dataset = dataset.skip(train_size)
 
-    train_dataset = train_dataset.shuffle(1000, seed=shuffle_seed).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    train_dataset = train_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     test_dataset = test_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     return train_dataset, test_dataset, dataset_length

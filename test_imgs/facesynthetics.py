@@ -4,7 +4,7 @@ import numpy as np
 
 hf_dataset = load_dataset("multimodalart/facesyntheticsspigacaptioned", split='train')
 
-def preprocess_example(example, img_size):
+def preprocess_example(example, img_size, model):
     target = example["image"].convert("RGB").resize((img_size, img_size))
     source = example["spiga_seg"].convert("RGB").resize((img_size, img_size))
 
@@ -14,32 +14,38 @@ def preprocess_example(example, img_size):
     source = source / 255.0
     target = (target / 127.5) - 1.0
 
+    caption = example["image_caption"]
+    # convert to utf-8
+    caption = caption.decode("utf-8") if isinstance(caption, bytes) else caption
+    encoded_text = model.encode_text(caption)
+
+    # convert from (1, 77, 768) to (77, 768)
+    encoded_text = np.squeeze(encoded_text, axis=0)
+
     return {
         "jpg": target,
         "hint": source,
-        "txt": example["image_caption"]
+        "txt": encoded_text
     }
 
-def generator(img_size):
+def generator(img_size, model):
     for example in hf_dataset:
-        yield preprocess_example(example, img_size)
+        yield preprocess_example(example, img_size, model)
 
 
-def get_dataset(batch_size=8, img_size=256, shuffle_seed=42):
+def get_dataset(model, batch_size=8, img_size=256, shuffle_seed=42):
     output_signature = {
         "jpg": tf.TensorSpec(shape=(img_size, img_size, 3), dtype=tf.float32),
         "hint": tf.TensorSpec(shape=(img_size, img_size, 3), dtype=tf.float32),
-        "txt": tf.TensorSpec(shape=(), dtype=tf.string),
+        "txt": tf.TensorSpec(shape=(77, 768), dtype=tf.float32)
     }
 
     dataset = tf.data.Dataset.from_generator(
-        lambda: generator(img_size),
+        lambda: generator(img_size, model),
         output_signature=output_signature
     )
 
     dataset_length = len(hf_dataset) # TODO: check if its correct here
-
-    # print(f"Preprocessing {dataset_length} examples...")
 
     # split dataset into train and test
     train_size = int(dataset_length * 0.8)
@@ -47,12 +53,10 @@ def get_dataset(batch_size=8, img_size=256, shuffle_seed=42):
     test_data = dataset.skip(train_size)
 
     # save the dataset to disk
-    train_data = train_data.cache()
-    test_data = test_data.cache()
+    # train_data = train_data.cache()
+    # test_data = test_data.cache()
 
-    # print(f"Preprocessing completed.")
-
-    train_data = train_data.shuffle(1000, seed=shuffle_seed).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    train_data = train_data.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     test_data = test_data.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     return train_data, test_data, dataset_length

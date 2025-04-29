@@ -1,6 +1,7 @@
 # train only: python main.py --dataset <dataset> --epochs <epochs> --train --save_imgs
 # resume training: python main.py --dataset <dataset> --epochs <epochs> --resume --load_epoch <load_epoch> --train --save_imgs
-# test only: python main.py --dataset <dataset> --resume --load_epoch <load_epoch> --test
+# resume training: python main.py --dataset <dataset> --epochs <epochs> --resume --load_current --train --save_imgs
+# test only: python main.py --dataset <dataset> --resume --load_best_epoch --test
 # keep batch size same for train and test
 
 import argparse
@@ -13,6 +14,7 @@ from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_i
 import tensorflow_probability as tfp
 from transformers import TFCLIPModel, CLIPProcessor
 from PIL import Image
+import pickle
 import os
 
 import matplotlib.pyplot as plt
@@ -23,7 +25,7 @@ clip_model = TFCLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train and Test ControlNet")
-    parser.add_argument('--dataset', type=str, default='fill50k', choices=['fill50k', 'facesynthetics'])
+    parser.add_argument('--dataset', type=str, default='facesynthetics', choices=['fill50k', 'facesynthetics'])
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
@@ -31,7 +33,10 @@ def parse_args():
     parser.add_argument('--img_size', type=int, default=256)
     parser.add_argument('--resume', action='store_true') # Set to True to resume training
     parser.add_argument('--load_dir', type=str, default='./checkpoints')
-    parser.add_argument('--load_epoch', type=int, default=1)
+    parser.add_argument('--load_epoch', type=int, default=0, help='Epoch to load weights from')
+    parser.add_argument('--load_best', action='store_true', help='Load best weights') # Set to True to load best weights
+    parser.add_argument('--load_current', action='store_true', help='Load current weights') # Set to True to load current weights
+    parser.add_argument('--load_best_epoch', type=int, default=0, help='Epoch to load best weights from')
     parser.add_argument('--train', action='store_true', help='Train the model') # Set to True to train the model
     parser.add_argument('--save_imgs', action='store_true', help='Save images') # Set to True to save images
     parser.add_argument('--test', action='store_true', help='Test the model') # Set to True to test the model
@@ -42,28 +47,66 @@ def main():
 
     os.makedirs(args.save_dir, exist_ok=True) # if exists, do nothing
 
+    model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
+
     if args.dataset == 'fill50k':
         from test_imgs import fill50k
-        train_dataset, test_dataset, dataset_length = fill50k.get_dataset(args.batch_size, args.img_size)
+        train_dataset, test_dataset, dataset_length = fill50k.get_dataset(model, args.batch_size, args.img_size)
     else:
         from test_imgs import facesynthetics
-        train_dataset, test_dataset, dataset_length = facesynthetics.get_dataset(batch_size=args.batch_size, img_size=args.img_size)
-
-    model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
+        train_dataset, test_dataset, dataset_length = facesynthetics.get_dataset(model, batch_size=args.batch_size, img_size=args.img_size)
 
     # build model
     dummy_input_shape = (args.batch_size, args.img_size, args.img_size, 3)
     model.build(dummy_input_shape)
 
     # load weights if available
-    if args.resume:
-        print("Loading weights...")
+    continue_in_batches = False
+    start_epoch = None
+    best_epoch_loss = None
+    losses = None
+    if args.resume and args.load_current:
+        print("Loading current weights...")
+        try:
+            model.control_model.load_weights(f"{args.load_dir}/controlnet_current.weights.h5")
+            model.diffuser.load_weights(f"{args.load_dir}/unet_current.weights.h5")
+            with open(f"{args.load_dir}/info_current.pkl", "rb") as f:
+                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
+                continue_in_batches = True
+            print(f"Loaded current weights successfully.")
+        except Exception as e:
+            print("Failed to load weights:", e)
+    elif args.resume and args.load_best:
+        print("Loading best weights...")
+        try:
+            model.control_model.load_weights(f"{args.load_dir}/controlnet_best.weights.h5")
+            model.diffuser.load_weights(f"{args.load_dir}/unet_best.weights.h5")
+            with open(f"{args.load_dir}/info_best.pkl", "rb") as f:
+                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
+                continue_in_batches = True
+            print("Loaded best weights successfully.")
+        except Exception as e:
+            print("Failed to load best weights:", e)
+    elif args.resume and args.load_best_epoch:
+        print("Loading best epoch weights...")
+        try:
+            model.control_model.load_weights(f"{args.load_dir}/controlnet_best_epoch.weights.h5")
+            model.diffuser.load_weights(f"{args.load_dir}/unet_best_epoch.weights.h5")
+            with open(f"{args.load_dir}/info_best_epoch.pkl", "rb") as f:
+                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
+            print("Loaded best epoch weights successfully.")
+        except Exception as e:
+            print("Failed to load best epoch weights:", e)
+    elif args.resume and args.load_epoch>0:
+        print("Loading epoch weights...")
         try:
             model.control_model.load_weights(f"{args.load_dir}/controlnet_epoch_{args.load_epoch}.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_epoch_{args.load_epoch}.weights.h5")
-            print("Loaded weights successfully.")
+            with open(f"{args.load_dir}/info_{args.load_epoch}.pkl", "rb") as f:
+                start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses = pickle.load(f)
+            print("Loaded epoch weights successfully.")
         except Exception as e:
-            print("Failed to load weights:", e)
+            print("Failed to load epoch weights:", e)
     else:
         print("Loading original weights...")
         try:
@@ -78,32 +121,62 @@ def main():
             print("Failed to load weights:", e)
             print("Train from scratch.")
 
-    print("----------Start Training----------")
-
-    losses = []
-
-    # for epoch in range(args.epochs):
-    #     for batch in train_dataset.take(1):
-    #         losses.append(model.train_step(batch)['loss'])
-
     if args.train:
         print("----------Start Training----------")
-        losses = []
+
+        if losses is None:
+            losses = []
 
         # Uncomment the following lines to test training the model with a single batch
-        # for epoch in range(1):
+        # for epoch in range(args.epochs):
         #     for batch in train_dataset.take(1):
         #         losses.append(model.train_step(batch)['loss'])
         #         print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {losses[-1]:.6f}")
 
-        start_epoch = args.load_epoch if args.resume else 0
-        for epoch in range(start_epoch, start_epoch+args.epochs):
-            epoch_loss = 0
-            for batch in train_dataset.take(1):
+        if start_epoch is None:
+            start_epoch = 0
+        if best_epoch_loss is None:
+            best_epoch_loss = 0.01
+        for epoch in range(start_epoch, start_epoch + args.epochs):
+            if not continue_in_batches:
+                epoch_loss = 0
+                best_batch_loss = 0.01
+                start_batch_num = 0
+            continue_in_batches = False
+
+            batch_num = 0
+            for batch in train_dataset:
+                if batch_num < start_batch_num:
+                    batch_num += 1
+                    continue
+
                 loss = model.train_step(batch)
                 epoch_loss += loss['loss']
-                print(f"Epoch {epoch+1}/{args.epochs}, Batch Loss: {loss['loss']:.6f}")
-            avg_epoch_loss = epoch_loss / dataset_length
+                batch_num += 1
+                print(f"Epoch {epoch+1}/{args.epochs}, Batch {batch_num}/{dataset_length // args.batch_size} Loss: {loss['loss']:.6f}")
+                
+                # save the model weights after every 100 batches
+                if batch_num % 20 == 0:
+                    try:
+                        model.control_model.save_weights(f"{args.save_dir}/controlnet_current.weights.h5")
+                        model.diffuser.save_weights(f"{args.save_dir}/unet_current.weights.h5")
+                        with open(f"{args.save_dir}/info_current.pkl", "wb") as f:
+                            pickle.dump([epoch, batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses], f)
+                        print(f"Saved current weights for epoch {epoch+1}, batch {batch_num}.")
+                    except Exception as e:
+                        print("Failed to save weights:", e)
+
+                if loss['loss'] < best_batch_loss:
+                    try:
+                        model.control_model.save_weights(f"{args.save_dir}/controlnet_best.weights.h5")
+                        model.diffuser.save_weights(f"{args.save_dir}/unet_best.weights.h5")
+                        with open(f"{args.save_dir}/info_best.pkl", "wb") as f:
+                            pickle.dump([epoch, batch_num, epoch_loss, best_epoch_loss, best_batch_loss, losses], f)
+                        print(f"Saved best weights for epoch {epoch+1}, batch {batch_num}.")
+                    except Exception as e:
+                        print("Failed to save weights:", e)
+
+            avg_epoch_loss = epoch_loss / len(train_dataset)
             losses.append(avg_epoch_loss)
             print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
             
@@ -111,13 +184,22 @@ def main():
             try:
                 model.control_model.save_weights(f"{args.save_dir}/controlnet_epoch_{epoch+1}.weights.h5")
                 model.diffuser.save_weights(f"{args.save_dir}/unet_epoch_{epoch+1}.weights.h5")
+                with open(f"{args.save_dir}/info_{epoch+1}.pkl", "wb") as f:
+                    pickle.dump([epoch + 1, 0, 0, 0, 0, losses], f)
                 print(f"Saved weights for epoch {epoch+1}.")
             except Exception as e:
                 print("Failed to save weights:", e)
-            # early stopping
-            if avg_epoch_loss < 0.01:
-                print("Early stopping...")
-                break
+
+            if avg_epoch_loss < best_epoch_loss:
+                best_epoch_loss = avg_epoch_loss
+                try:
+                    model.control_model.save_weights(f"{args.save_dir}/controlnet_best_epoch.weights.h5")
+                    model.diffuser.save_weights(f"{args.save_dir}/unet_best_epoch.weights.h5")
+                    with open(f"{args.save_dir}/info_best_epoch.pkl", "wb") as f:
+                        pickle.dump([epoch + 1, 0, 0, 0, 0, losses], f)
+                    print(f"Saved best weights for epoch {epoch+1}.")
+                except Exception as e:
+                    print("Failed to save weights:", e)
         
         print("----------Finish Training----------")
 
