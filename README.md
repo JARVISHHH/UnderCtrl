@@ -1,7 +1,9 @@
 # UnderCtrl
 
-## Environment
+## Environment for Oscar
 ```
+python3 -m venv ~/controlnet-env
+source ~/controlnet-env/bin/activate
 pip install -r requirements.txt
 ```
 

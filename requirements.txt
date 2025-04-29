@@ -7,3 +7,4 @@ opencv-python==4.11.0.86
 tf-keras==2.19.0
 transformers==4.51.3
 tensorflow_probability==0.25.0
+matplotlib==3.9.4
