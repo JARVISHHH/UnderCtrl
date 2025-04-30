@@ -3,12 +3,6 @@ from datasets import load_dataset
 import numpy as np
 from PIL import Image  # Ensure correct image handling
 
-# Load and split dataset
-hf_dataset = load_dataset("multimodalart/facesyntheticsspigacaptioned", split="train")
-hf_dataset_split = hf_dataset.train_test_split(test_size=0.2, seed=42)
-train_set = hf_dataset_split["train"]
-test_set = hf_dataset_split["test"]
-
 def preprocess_example(example, img_size, model):
     target = example["image"].convert("RGB").resize((img_size, img_size))
     source = example["spiga_seg"].convert("RGB").resize((img_size, img_size))
@@ -37,7 +31,13 @@ def make_generator(dataset, img_size, model):
             yield preprocess_example(example, img_size, model)
     return gen
 
-def get_dataset(model, batch_size=8, img_size=256):
+def get_dataset(model, batch_size=8, img_size=256, test_size=0.2):
+    # Load and split dataset
+    hf_dataset = load_dataset("multimodalart/facesyntheticsspigacaptioned", split="train")
+    hf_dataset_split = hf_dataset.train_test_split(test_size=test_size, seed=42)
+    train_set = hf_dataset_split["train"]
+    test_set = hf_dataset_split["test"]
+
     output_signature = {
         "jpg": tf.TensorSpec(shape=(img_size, img_size, 3), dtype=tf.float32),
         "hint": tf.TensorSpec(shape=(img_size, img_size, 3), dtype=tf.float32),

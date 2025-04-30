@@ -31,6 +31,7 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--save_dir', type=str, default='./checkpoints', help='Directory to save checkpoints and images')
     parser.add_argument('--img_size', type=int, default=256)
+    parser.add_argument('--test_size', type=float, default=0.2)
     parser.add_argument('--resume', action='store_true') # Set to True to resume training
     parser.add_argument('--load_dir', type=str, default='./checkpoints')
     parser.add_argument('--load_epoch', type=int, default=0, help='Epoch to load weights from')
@@ -51,10 +52,13 @@ def main():
 
     if args.dataset == 'fill50k':
         from test_imgs import fill50k
-        train_dataset, test_dataset, dataset_length = fill50k.get_dataset(model, args.batch_size, args.img_size)
+        train_dataset, test_dataset, dataset_length = fill50k.get_dataset(model, args.batch_size, args.img_size, test_size=args.test_size)
+        
     else:
         from test_imgs import facesynthetics
-        train_dataset, test_dataset, dataset_length = facesynthetics.get_dataset(model, batch_size=args.batch_size, img_size=args.img_size)
+        train_dataset, test_dataset, dataset_length = facesynthetics.get_dataset(model, batch_size=args.batch_size, img_size=args.img_size, test_size=args.test_size)
+    train_dataset_length = (int)(dataset_length * (1 - args.test_size))
+    test_dataset_length = dataset_length - train_dataset_length
 
     # build model
     dummy_input_shape = (args.batch_size, args.img_size, args.img_size, 3)
@@ -173,7 +177,7 @@ def main():
                 batch_losses.append(loss['loss'])
                 epoch_loss += loss['loss']
                 batch_num += 1
-                print(f"Epoch {epoch+1}/{args.epochs}, Batch {batch_num}/{dataset_length // args.batch_size} Loss: {loss['loss']:.6f}")
+                print(f"Epoch {epoch+1}/{args.epochs}, Batch {batch_num}/{train_dataset_length // args.batch_size} Loss: {loss['loss']:.6f}")
                 
                 # save the model weights after every 100 batches
                 if batch_num % 20 == 0:
@@ -196,7 +200,7 @@ def main():
                     except Exception as e:
                         print("Failed to save weights:", e)
 
-            avg_epoch_loss = epoch_loss / len(train_dataset)
+            avg_epoch_loss = epoch_loss / train_dataset_length
             epoch_losses.append(avg_epoch_loss)
             print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
             

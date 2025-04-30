@@ -40,9 +40,9 @@ def make_generator(dataset, img_size, model):
             yield preprocess_item(item, img_size, model)
     return gen
 
-def get_dataset(model, batch_size, img_size, shuffle_seed=42):
+def get_dataset(model, batch_size, img_size, shuffle_seed=42, test_size=0.2):
     prompt_dataset = read_prompt_dataset()
-    prompt_split = prompt_dataset.train_test_split(test_size=0.2, seed=shuffle_seed)
+    prompt_split = prompt_dataset.train_test_split(test_size=test_size, seed=shuffle_seed)
 
     train_items = prompt_split["train"]
     test_items = prompt_split["test"]
