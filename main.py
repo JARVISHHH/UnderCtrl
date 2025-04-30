@@ -78,6 +78,11 @@ def main():
         try:
             model.control_model.load_weights(f"{args.load_dir}/controlnet_current.weights.h5")
             model.diffuser.load_weights(f"{args.load_dir}/unet_current.weights.h5")
+            print(f"Loaded current weights successfully.")
+        except Exception as e:
+            print("Failed to load weights:", e)
+
+        try:
             with open(f"{args.load_dir}/info_current.pkl", "rb") as f:
                 info = pickle.load(f)
                 if len(info) == 6:
@@ -85,9 +90,14 @@ def main():
                 else:
                     start_epoch, start_batch_num, epoch_loss, best_epoch_loss, best_batch_loss, epoch_losses, batch_losses = info
                 continue_in_batches = True
-            print(f"Loaded current weights successfully.")
+            print("Loaded current weights info successfully.")
         except Exception as e:
-            print("Failed to load weights:", e)
+            print("Failed to load current weights info:", e)
+            continue_in_batches = False
+            start_epoch = None
+            best_epoch_loss = None
+            epoch_losses = None
+            batch_losses = None
     elif args.resume and args.load_best:
         print("Loading best weights...")
         try:
@@ -316,6 +326,7 @@ def main():
         for ax in axs.flat:
             ax.axis('off')
         plt.tight_layout()
+        plt.suptitle(text_str, fontsize=16)
         plt.show()
         print("----------Finish Inference----------")
 

@@ -2,6 +2,7 @@ import tensorflow as tf
 from datasets import load_dataset
 import numpy as np
 from PIL import Image  # Ensure correct image handling
+import os
 
 def preprocess_example(example, img_size, model):
     target = example["image"].convert("RGB").resize((img_size, img_size))
@@ -33,10 +34,18 @@ def make_generator(dataset, img_size, model):
 
 def get_dataset(model, batch_size=8, img_size=256, test_size=0.2):
     # Load and split dataset
-    hf_dataset = load_dataset("multimodalart/facesyntheticsspigacaptioned", split="train")
-    hf_dataset_split = hf_dataset.train_test_split(test_size=test_size, seed=42)
+    
+    if os.path.exists("training/face_hf_dataset_split"):
+        hf_dataset_split = load_dataset("training/face_hf_dataset_split")
+        print("Loaded dataset from disk.")
+    else:
+        os.makedirs("training", exist_ok=True)
+        hf_dataset = load_dataset("multimodalart/facesyntheticsspigacaptioned", split="train")
+        hf_dataset_split = hf_dataset.train_test_split(test_size=test_size, seed=42)
+        hf_dataset_split.save_to_disk("training/face_hf_dataset_split")
+        print("Dataset split and saved to disk.")
     train_set = hf_dataset_split["train"]
-    test_set = hf_dataset_split["test"]
+    test_set = hf_dataset_split["test"]    
 
     output_signature = {
         "jpg": tf.TensorSpec(shape=(img_size, img_size, 3), dtype=tf.float32),
@@ -58,7 +67,7 @@ def get_dataset(model, batch_size=8, img_size=256, test_size=0.2):
     train_data = train_data.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     test_data = test_data.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
-    return train_data, test_data, len(hf_dataset)
+    return train_data, test_data, len(train_set) + len(test_set)
 
 # Usage example:
 # train_ds, test_ds, train_len, test_len = get_dataset(your_model)
