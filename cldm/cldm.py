@@ -21,12 +21,11 @@ class ControlNet(keras.Model):
         super().__init__()
 
         # Time embedding
-        self.time_embedding_model = tf.keras.Sequential([
-            # keras.layers.Input((320,), name="timestep_embedding"),
+        self.time_embedding_layers = [
             keras.layers.Dense(1280),
             keras.layers.Activation("swish"),
             keras.layers.Dense(1280),
-        ])
+        ]
 
         # Compute hint embedding. See cldm/cldm.py Line 147.
         self.hint_embedding_model = tf.keras.Sequential([
@@ -93,8 +92,11 @@ class ControlNet(keras.Model):
 
     def __call__(self, inputs):
         context, t_embed_input, latent, control = inputs
-        t_emb = self.time_embedding_model(t_embed_input)
         guided_hint = self.hint_embedding_model(control)
+
+        t_emb = self.time_embedding_layers[0](t_embed_input)
+        t_emb = self.time_embedding_layers[1](t_emb)
+        t_emb = self.time_embedding_layers[2](t_emb)
 
         index = 0
         final_output = []
@@ -144,40 +146,40 @@ class ControlledUnetModel(keras.Model):
         super().__init__()
 
         # Time embedding
-        self.time_embedding_model = tf.keras.Sequential([
+        self.time_embedding_layers = [
             keras.layers.Dense(1280),
             keras.layers.Activation("swish"),
             keras.layers.Dense(1280),
-        ])
+        ]
 
         self.unet_layers = [
             # Downsampling flow
-            PaddedConv2D(320, kernel_size=3, padding=1, trainable=False, name='lock_1'),
+            PaddedConv2D(320, kernel_size=3, padding=1, trainable=False),
             ### SD Encoder Block 1
-            ResBlock(320, trainable=False, name='lock_2'),
-            SpatialTransformer(8, 40, fully_connected=False, trainable=False, name='lock_3'),
-            ResBlock(320, trainable=False, name='lock_4'),
-            SpatialTransformer(8, 40, fully_connected=False, trainable=False, name='lock_5'),
-            PaddedConv2D(320, 3, strides=2, padding=1, trainable=False, name='lock_6'),
+            ResBlock(320, trainable=False),
+            SpatialTransformer(8, 40, fully_connected=False, trainable=False),
+            ResBlock(320, trainable=False),
+            SpatialTransformer(8, 40, fully_connected=False, trainable=False),
+            PaddedConv2D(320, 3, strides=2, padding=1, trainable=False),
             ### SD Encoder Block 2
-            ResBlock(640, trainable=False, name='lock_7'),
-            SpatialTransformer(8, 80, fully_connected=False, trainable=False, name='lock_8'),
-            ResBlock(640, trainable=False, name='lock_9'),
-            SpatialTransformer(8, 80, fully_connected=False, trainable=False, name='lock_10'),
-            PaddedConv2D(640, 3, strides=2, padding=1, trainable=False, name='lock_11'),
+            ResBlock(640, trainable=False),
+            SpatialTransformer(8, 80, fully_connected=False, trainable=False),
+            ResBlock(640, trainable=False),
+            SpatialTransformer(8, 80, fully_connected=False, trainable=False),
+            PaddedConv2D(640, 3, strides=2, padding=1, trainable=False),
             ### SD Encoder Block 3
-            ResBlock(1280, trainable=False, name='lock_12'),
-            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_13'),
-            ResBlock(1280, trainable=False, name='lock_14'),
-            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_15'),
-            PaddedConv2D(1280, 3, strides=2, padding=1, trainable=False, name='lock_16'),
+            ResBlock(1280, trainable=False),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
+            ResBlock(1280, trainable=False),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
+            PaddedConv2D(1280, 3, strides=2, padding=1, trainable=False),
             ### SD Encoder Block
-            ResBlock(1280, trainable=False, name='lock_17'),
-            ResBlock(1280, trainable=False, name='lock_18'),
+            ResBlock(1280, trainable=False),
+            ResBlock(1280, trainable=False),
             # Middle flow
-            ResBlock(1280, trainable=False, name='lock_19'),
-            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_20'),
-            ResBlock(1280, trainable=False, name='lock_21'),
+            ResBlock(1280, trainable=False),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
+            ResBlock(1280, trainable=False),
             # Upsampling flow
             ### SD Decoder
             keras.layers.Concatenate(),
@@ -227,7 +229,10 @@ class ControlledUnetModel(keras.Model):
 
     def __call__(self, inputs):
         context, t_embed_input, latent, control = inputs
-        t_emb = self.time_embedding_model(t_embed_input)
+        
+        t_emb = self.time_embedding_layers[0](t_embed_input)
+        t_emb = self.time_embedding_layers[1](t_emb)
+        t_emb = self.time_embedding_layers[2](t_emb)
 
         index = 0
         output = []
@@ -312,8 +317,12 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         self.noise_scheduler = keras_cv.models.stable_diffusion.NoiseScheduler()
         self.max_grad_norm = 1.0
 
+        keras.backend.clear_session()
+
         self.control_model = ControlNet(img_height, img_width)
         self.control_scales = [1.0] * 13
+
+        keras.backend.clear_session()
 
         self.diffuser = ControlledUnetModel()
 

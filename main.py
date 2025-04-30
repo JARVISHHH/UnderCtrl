@@ -148,8 +148,22 @@ def main():
                                     origin="https://huggingface.co/fchollet/stable-diffusion/resolve/main/kcv_diffusion_model.h5",  # noqa: E501
                                     file_hash="8799ff9763de13d7f30a683d653018e114ed24a6a819667da4f5ee10f9e805fe",  # noqa: E501
             )
+            
+            original_weights = {layer.name: layer.get_weights() for layer in model.control_model.layers}
             model.control_model.load_weights(file, by_name=True, skip_mismatch=True)
+            for layer in model.control_model.layers:
+                before = original_weights[layer.name]
+                after = layer.get_weights()
+                if any((b != a).any() for b, a in zip(before, after)):
+                    print(f"Weights loaded for layer: {layer.name}")
+
+            original_weights = {layer.name: layer.get_weights() for layer in model.diffuser.layers}
             model.diffuser.load_weights(file, by_name=True, skip_mismatch=True)
+            for layer in model.diffuser.layers:
+                before = original_weights[layer.name]
+                after = layer.get_weights()
+                if any((b != a).any() for b, a in zip(before, after)):
+                    print(f"Weights loaded for layer: {layer.name}")
             print("Loaded weights successfully.")
         except Exception as e:
             print("Failed to load weights:", e)
@@ -328,6 +342,7 @@ def main():
         plt.tight_layout()
         plt.suptitle(text_str, fontsize=16)
         plt.show()
+
         print("----------Finish Inference----------")
 
 def resize_images(images, target_size=(299, 299)):
