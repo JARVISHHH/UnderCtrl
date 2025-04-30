@@ -42,14 +42,14 @@ def make_generator(dataset, img_size, model):
     return gen
 
 def get_dataset(model, batch_size, img_size, test_size=0.2):
-    if os.path.exists("training/fill50k_prompt_split"):
-        prompt_split = load_from_disk("training/fill50k_prompt_split")
-        print("Loaded dataset from disk.")
-    else:
-        prompt_dataset = read_prompt_dataset()
-        prompt_split = prompt_dataset.train_test_split(test_size=test_size)
-        prompt_split.save_to_disk("training/fill50k_prompt_split")
-        print("Dataset split and saved to disk.")
+    # if os.path.exists("training/fill50k_prompt_split"):
+    #     prompt_split = load_from_disk("training/fill50k_prompt_split")
+    #     print("Loaded dataset from disk.")
+    # else:
+    prompt_dataset = read_prompt_dataset()
+    prompt_split = prompt_dataset.train_test_split(test_size=test_size, seed=42)
+    # prompt_split.save_to_disk("training/fill50k_prompt_split")
+    # print("Dataset split and saved to disk.")
 
     train_items = prompt_split["train"]
     test_items = prompt_split["test"]
