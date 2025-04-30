@@ -236,15 +236,14 @@ def main():
 
     if args.test:
         print("----------Start Testing----------")
-        captions = [data['txt'] for data in test_dataset]
         captions = []
         for batch in test_dataset:
-            captions.extend(batch['txt'].numpy().tolist())
+            captions.extend(batch['str'].numpy().tolist())
         captions = [c.decode('utf-8') if isinstance(c, bytes) else c for c in captions]
         generated_images_sd = []
         stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
 
-        for caption in captions[0:args.batch_size]:
+        for caption in captions:
             generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=1)[0])
         
         save_image_pil(np.array(generated_images_sd), "outputs/sd", "sd")
@@ -259,18 +258,20 @@ def main():
             generated_images_controlnet_clip.extend(images.numpy())
             generated_images_controlnet_fid.append(images.numpy())
             print(images.numpy())
-            save_image_pil(images.numpy(), "outputs/cn", "cn", batch_num)
+            save_image_pil(batch['hint'].numpy(), 'outputs/hint', 'hint', batch_num * args.batch_size)
+            save_image_pil(batch['jpg'].numpy(), 'outputs/jpg', 'jpg', batch_num * args.batch_size)
+            save_image_pil(images.numpy(), "outputs/cn", "cn", batch_num * args.batch_size)
             batch_num += 1
 
-        clip_score_sd = calculate_clip_score(generated_images_sd, captions[0:args.batch_size])
-        clip_score_controlnet = calculate_clip_score(generated_images_controlnet_clip, captions[0:args.batch_size])
+        clip_score_sd = calculate_clip_score(generated_images_sd, captions)
+        clip_score_controlnet = calculate_clip_score(generated_images_controlnet_clip, captions)
         print("CLIP Score:")
         print("Stable Diffusion: " + str(clip_score_sd))
         print("Control Net: " + str(clip_score_controlnet))
 
         real_images = [data['jpg'] for data in test_dataset]
-        fid_score_sd = calculate_fid_score(real_images[0:args.batch_size], tf.convert_to_tensor(generated_images_sd))
-        fid_score_controlnet = calculate_fid_score(real_images[0:args.batch_size], generated_images_controlnet_fid)
+        fid_score_sd = calculate_fid_score(real_images, tf.convert_to_tensor(generated_images_sd))
+        fid_score_controlnet = calculate_fid_score(real_images, generated_images_controlnet_fid)
         print("FID Score:")
         print("Stable Diffusion: " + str(fid_score_sd))
         print("Control Net: " + str(fid_score_controlnet))
