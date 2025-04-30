@@ -327,6 +327,8 @@ def main():
             ax.axis('off')
         plt.tight_layout()
         plt.suptitle(text_str, fontsize=16)
+        plt.savefig(f"outputs/inference_{text_str}.png")
+        print(f"Saved inference image as outputs/inference_{text_str}.png")
         plt.show()
         print("----------Finish Inference----------")
 
