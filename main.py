@@ -49,6 +49,7 @@ def main():
     args = parse_args()
 
     os.makedirs(args.save_dir, exist_ok=True) # if exists, do nothing
+    os.makedirs("outputs", exist_ok=True) # if exists, do nothing
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
     stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
@@ -329,7 +330,7 @@ def main():
         plt.suptitle(text_str, fontsize=16)
         plt.savefig(f"outputs/inference_{text_str}.png")
         print(f"Saved inference image as outputs/inference_{text_str}.png")
-        plt.show()
+        # plt.show()
         print("----------Finish Inference----------")
 
 def resize_images(images, target_size=(299, 299)):
