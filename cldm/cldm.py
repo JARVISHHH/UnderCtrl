@@ -396,50 +396,108 @@ class ControlSDB(keras_cv.models.StableDiffusion):
 
         return { 'loss': loss }
 
-    def predict(self, inputs):
-        latents, encoded_text, controls = self.get_input(inputs)
-        batch_size = tf.shape(latents)[0]
-        
-        timesteps = np.random.randint(0, self.noise_scheduler.train_timesteps, (batch_size,))
-        
-        for t in timesteps:
-            t = tf.cast(t, 'int32')
-            
-            alpha_prod_t = tf.maximum(self.noise_scheduler.alphas_cumprod[t], 1e-6)
-            alpha_prod_t_prev = tf.maximum(
-                self.noise_scheduler.alphas_cumprod[t-1] if t > 0 else 1.0,
-                1e-6
+    def predict(self, inputs, num_steps=50, unconditional_guidance_scale=7.5):
+        targets, encoded_text, controls = self.get_input(inputs)
+
+        batch_size = targets.shape[0]
+
+        unconditional_context = tf.repeat(
+                self._get_unconditional_context(), batch_size, axis=0
             )
-            
-            t_embed = tf.stop_gradient(timestep_embedding(tf.repeat(t, batch_size)))
-            
-            if isinstance(encoded_text, list):
-                encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
-            else:
-                encoded_text = tf.convert_to_tensor(encoded_text)
 
-            control = self.control_model([encoded_text, t_embed, latents, controls])
+        latents = tf.random.normal(shape=tf.shape(targets), dtype=targets.dtype)
+
+        # Iterative reverse diffusion stage
+        num_timesteps = 1000
+        ratio = (
+            (num_timesteps - 1) / (num_steps - 1)
+            if num_steps > 1
+            else num_timesteps
+        )
+        timesteps = (np.arange(0, num_steps) * ratio).round().astype(np.int64)
+
+        alphas, alphas_prev = self._get_initial_alphas(timesteps)
+        progbar = keras.utils.Progbar(len(timesteps))
+        iteration = 0
+        for index, timestep in list(enumerate(timesteps))[::-1]:
+            latent_prev = latents  # Set aside the previous latent vector
+            t_emb = self._get_timestep_embedding(timestep, batch_size)
+
+            unconditional_control = self.control_model([unconditional_context, t_emb, latents, controls])
+            unconditional_control = [c * scale for c, scale in zip(unconditional_control, self.control_scales)]
+            unconditional_latents = self.diffuser([unconditional_context, t_emb, latents, unconditional_control])
+
+            control = self.control_model([encoded_text, t_emb, latents, controls])
             control = [c * scale for c, scale in zip(control, self.control_scales)]
-       
-            eps = self.diffuser([encoded_text, t_embed, latents, control])
-            
-            # Copying part of noise_scheduler's step function because it's incompatible with the keras_cv version
-            beta_prod_t = 1 - alpha_prod_t
-            pred_original = (latents - beta_prod_t**0.5 * eps) / tf.maximum(alpha_prod_t**0.5, 1e-3)
-            
-            variance = (beta_prod_t / alpha_prod_t) * (1 - alpha_prod_t_prev / alpha_prod_t)
-            noise = tf.random.normal(tf.shape(latents)) if t > 0 else 0.0
-            temp = alpha_prod_t_prev**0.5 * pred_original + tf.sqrt(variance) * noise
+            latents = self.diffuser([encoded_text, t_emb, latents, control])
 
-            if tf.reduce_any(tf.math.is_nan(temp)):
-                print(f"NaN detected at t={t} - resetting latents")
-                break
-                
-            latents = temp
+            latents = tf.convert_to_tensor(
+                unconditional_latents
+                + unconditional_guidance_scale * (latents - unconditional_latents)
+            )
+            a_t, a_prev = alphas[index], alphas_prev[index]
+            # Keras backend array need to cast explicitly
+            target_dtype = latent_prev.dtype
+            latents = tf.cast(latents, target_dtype)
+            pred_x0 = (latent_prev - tf.math.sqrt(1 - a_t) * latents) / tf.math.sqrt(
+                a_t
+            )
+            latents = (
+                tf.convert_to_tensor(latents) * tf.math.sqrt(1.0 - a_prev)
+                + tf.math.sqrt(a_prev) * pred_x0
+            )
+            iteration += 1
+            progbar.update(iteration)
+
+        # Decoding stage
+        decoded = self.decoder.predict_on_batch(latents)
+        decoded = ((decoded + 1) / 2) * 255
+        return np.clip(decoded, 0, 255).astype("uint8")
         
-        images = self.decoder(latents)
-        images = tf.clip_by_value(images, -1.0, 1.0)
-        return (images + 1.0) * 127.5
+        # latents, encoded_text, controls = self.get_input(inputs)
+        # batch_size = tf.shape(latents)[0]
+        
+        # timesteps = np.random.randint(0, self.noise_scheduler.train_timesteps, (batch_size,))
+        
+        # for t in timesteps:
+        #     t = tf.cast(t, 'int32')
+            
+        #     alpha_prod_t = tf.maximum(self.noise_scheduler.alphas_cumprod[t], 1e-6)
+        #     alpha_prod_t_prev = tf.maximum(
+        #         self.noise_scheduler.alphas_cumprod[t-1] if t > 0 else 1.0,
+        #         1e-6
+        #     )
+            
+        #     t_embed = timestep_embedding(tf.repeat(t, batch_size))
+            
+        #     if isinstance(encoded_text, list):
+        #         encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
+        #     else:
+        #         encoded_text = tf.convert_to_tensor(encoded_text)
+
+        #     control = self.control_model([encoded_text, t_embed, latents, controls])
+        #     control = [c * scale for c, scale in zip(control, self.control_scales)]
+       
+        #     eps = self.diffuser([encoded_text, t_embed, latents, control])
+            
+        #     # Copying part of noise_scheduler's step function because it's incompatible with the keras_cv version
+        #     beta_prod_t = 1 - alpha_prod_t
+        #     pred_original = (latents - beta_prod_t**0.5 * eps) / tf.maximum(alpha_prod_t**0.5, 1e-3)
+            
+        #     variance = (beta_prod_t / alpha_prod_t) * (1 - alpha_prod_t_prev / alpha_prod_t)
+        #     noise = tf.random.normal(tf.shape(latents)) if t > 0 else 0.0
+        #     temp = alpha_prod_t_prev**0.5 * pred_original + tf.sqrt(variance) * noise
+
+        #     if tf.reduce_any(tf.math.is_nan(temp)):
+        #         print(f"NaN detected at t={t} - resetting latents")
+        #         break
+                
+        #     latents = temp
+        
+        # images = self.decoder(latents)
+        # images = tf.clip_by_value(images, -1.0, 1.0)
+        # return (images + 1.0) * 127.5
+        
 
     def get_input(self, inputs):
         # TODO: should images be rearranged? from (b h w c) to (b c h w)?

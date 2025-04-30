@@ -297,11 +297,11 @@ def main():
         image = sample['jpg']
         hint = sample['hint']
 
-        # generate sd image
-        sd_image = stable_diffusion.text_to_image(text_str, batch_size=1)[0]
-
         # generate cn image
         cn_image = model.predict(sample)
+
+        # generate sd image
+        sd_image = stable_diffusion.text_to_image(text_str, batch_size=1)[0]
 
         # plot image, hint, sd_image, cn_image, text as title
         fig, axs = plt.subplots(2, 2, figsize=(10, 10))
