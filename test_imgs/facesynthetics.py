@@ -35,15 +35,17 @@ def make_generator(dataset, img_size, model):
 def get_dataset(model, batch_size=8, img_size=256, test_size=0.2):
     # Load and split dataset
     
-    if os.path.exists("training/face_hf_dataset_split"):
-        hf_dataset_split = load_dataset("training/face_hf_dataset_split")
-        print("Loaded dataset from disk.")
-    else:
-        os.makedirs("training", exist_ok=True)
-        hf_dataset = load_dataset("multimodalart/facesyntheticsspigacaptioned", split="train")
-        hf_dataset_split = hf_dataset.train_test_split(test_size=test_size, seed=42)
-        hf_dataset_split.save_to_disk("training/face_hf_dataset_split")
-        print("Dataset split and saved to disk.")
+    # if os.path.exists("training/face_hf_dataset_split"):
+    #     hf_dataset_split = load_dataset("training/face_hf_dataset_split")
+    #     print("Loaded dataset from disk.")
+    # else:
+
+    os.makedirs("training", exist_ok=True)
+    hf_dataset = load_dataset("multimodalart/facesyntheticsspigacaptioned", split="train")
+    hf_dataset_split = hf_dataset.train_test_split(test_size=test_size, seed=42)
+    # hf_dataset_split.save_to_disk("training/face_hf_dataset_split")
+    # print("Dataset split and saved to disk.")
+
     train_set = hf_dataset_split["train"]
     test_set = hf_dataset_split["test"]    
 
