@@ -276,24 +276,24 @@ class ControlledUnetModel(keras.Model):
         # Upsampling flow
         ### SD Decoder
         for _ in range(3):
-            x = self.unet_layers[index]([x, output.pop() + control.pop()]]); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
             x = self.unet_layers[index]([x, t_emb]); index += 1
         x = self.unet_layers[index](x); index += 1
         ### SD Decoder 3
         for _ in range(3):
-            x = self.unet_layers[index]([x, output.pop() + control.pop()]]); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
             x = self.unet_layers[index]([x, t_emb]); index += 1
             x = self.unet_layers[index]([x, context]); index += 1
         x = self.unet_layers[index](x); index += 1
         ### SD Decoder 2
         for _ in range(3):
-            x = self.unet_layers[index]([x, output.pop() + control.pop()]]); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
             x = self.unet_layers[index]([x, t_emb]); index += 1
             x = self.unet_layers[index]([x, context]); index += 1
         x = self.unet_layers[index](x); index += 1
         ### SD Decoder 1
         for _ in range(3):
-            x = self.unet_layers[index]([x, output.pop() + control.pop()]]); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
             x = self.unet_layers[index]([x, t_emb]); index += 1
             x = self.unet_layers[index]([x, context]); index += 1
 
