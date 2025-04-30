@@ -145,25 +145,50 @@ def main():
     else:
         print("Loading original weights...")
         try:
-            file = keras.utils.get_file(
-                                    origin="https://huggingface.co/fchollet/stable-diffusion/resolve/main/kcv_diffusion_model.h5",  # noqa: E501
-                                    file_hash="8799ff9763de13d7f30a683d653018e114ed24a6a819667da4f5ee10f9e805fe",  # noqa: E501
-            )
-            original_weights = {layer.name: layer.get_weights() for layer in model.control_model.layers}
-            model.control_model.load_weights(file, by_name=True, skip_mismatch=True)
-            for layer in model.control_model.layers:
-                before = original_weights[layer.name]
-                after = layer.get_weights()
-                if any((b != a).any() for b, a in zip(before, after)):
-                    print(f"Weights loaded for layer: {layer.name}")
+            # file = keras.utils.get_file(
+            #                         origin="https://huggingface.co/fchollet/stable-diffusion/resolve/main/kcv_diffusion_model.h5",  # noqa: E501
+            #                         file_hash="8799ff9763de13d7f30a683d653018e114ed24a6a819667da4f5ee10f9e805fe",  # noqa: E501
+            # )
+            # print("Loading control model.")
+            # original_weights = {layer.name: layer.get_weights() for layer in model.control_model.layers}
+            # model.control_model.load_weights(file, skip_mismatch=True)
+            # for layer in model.control_model.layers:
+            #     before = original_weights[layer.name]
+            #     after = layer.get_weights()
+            #     if any((b != a).any() for b, a in zip(before, after)):
+            #         print(f"Control Model weights loaded for layer: {layer.name}")
 
-            original_weights = {layer.name: layer.get_weights() for layer in model.diffuser.layers}
-            model.diffuser.load_weights(file, by_name=True, skip_mismatch=True)
+            # print("Loading diffuser model.")
+            # original_weights = {layer.name: layer.get_weights() for layer in model.diffuser.layers}
+            # model.diffuser.load_weights(file)
+            # for layer in model.diffuser.layers:
+            #     before = original_weights[layer.name]
+            #     after = layer.get_weights()
+            #     if any((b != a).any() for b, a in zip(before, after)):
+            #         print(f"Diffuser weights loaded for layer: {layer.name}")
+
+            original_weights = {layer.name: layer.get_weights() for layer in stable_diffusion.diffusion_model.layers}
+
+            for layer in model.control_model.layers:
+                if layer.name in original_weights:
+                    try:
+                        layer.set_weights(original_weights[layer.name])
+                        print(f"[Loaded] {layer.name}")
+                    except Exception as e:
+                        print(f"[Mismatch] {layer.name}: {e}")
+                else:
+                    print(f"[Skipped] {layer.name} (not found)")
+
             for layer in model.diffuser.layers:
-                before = original_weights[layer.name]
-                after = layer.get_weights()
-                if any((b != a).any() for b, a in zip(before, after)):
-                    print(f"Weights loaded for layer: {layer.name}")
+                if layer.name in original_weights:
+                    try:
+                        layer.set_weights(original_weights[layer.name])
+                        print(f"[Loaded] {layer.name}")
+                    except Exception as e:
+                        print(f"[Mismatch] {layer.name}: {e}")
+                else:
+                    print(f"[Skipped] {layer.name} (not found)")
+
             print("Loaded weights successfully.")
         except Exception as e:
             print("Failed to load weights:", e)
@@ -309,6 +334,15 @@ def main():
 
     if args.inference:
         print("----------Start Inference----------")
+
+        original_weights = {layer.name: layer.get_weights() for layer in stable_diffusion.diffusion_model.layers}
+        for layer in model.diffuser.layers:
+            before = original_weights[layer.name]
+            after = layer.get_weights()
+            if any((b != a).any() for b, a in zip(before, after)):
+                print(f"Diffuser weights different for layer: {layer.name}")
+                
+        print("compare finished")
 
         sample = next(iter(test_dataset))
 

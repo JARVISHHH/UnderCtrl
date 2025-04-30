@@ -61,7 +61,7 @@ class ControlNet(keras.Model):
             PaddedConv2D(320, 3, strides=2, padding=1),
             ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_4'),  # Control
             ### SD Encoder Block 2
-            ResBlock(640),
+            ResBlock(640, must_conv2d=True),
             SpatialTransformer(8, 80, fully_connected=False),
             ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_5'),  # Control
             ResBlock(640),
@@ -70,7 +70,7 @@ class ControlNet(keras.Model):
             PaddedConv2D(640, 3, strides=2, padding=1),
             ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_7'),  # Control
             ### SD Encoder Block 3
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             SpatialTransformer(8, 160, fully_connected=False),
             ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_8'),  # Control
             ResBlock(1280),
@@ -162,13 +162,13 @@ class ControlledUnetModel(keras.Model):
             SpatialTransformer(8, 40, fully_connected=False, trainable=False),
             PaddedConv2D(320, 3, strides=2, padding=1, trainable=False),
             ### SD Encoder Block 2
-            ResBlock(640, trainable=False),
+            ResBlock(640, must_conv2d=True, trainable=False),
             SpatialTransformer(8, 80, fully_connected=False, trainable=False),
             ResBlock(640, trainable=False),
             SpatialTransformer(8, 80, fully_connected=False, trainable=False),
             PaddedConv2D(640, 3, strides=2, padding=1, trainable=False),
             ### SD Encoder Block 3
-            ResBlock(1280, trainable=False),
+            ResBlock(1280, must_conv2d=True, trainable=False),
             SpatialTransformer(8, 160, fully_connected=False, trainable=False),
             ResBlock(1280, trainable=False),
             SpatialTransformer(8, 160, fully_connected=False, trainable=False),
@@ -183,43 +183,43 @@ class ControlledUnetModel(keras.Model):
             # Upsampling flow
             ### SD Decoder
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             Upsample(1280),
             ### SD Decoder 3
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             SpatialTransformer(8, 160, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             SpatialTransformer(8, 160, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             SpatialTransformer(8, 160, fully_connected=False),
             Upsample(1280),
             ### SD Decoder 2
             keras.layers.Concatenate(),
-            ResBlock(640),
+            ResBlock(640, must_conv2d=True),
             SpatialTransformer(8, 80, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(640),
+            ResBlock(640, must_conv2d=True),
             SpatialTransformer(8, 80, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(640),
+            ResBlock(640, must_conv2d=True),
             SpatialTransformer(8, 80, fully_connected=False),
             Upsample(640),
             ### SD Decoder 1
             keras.layers.Concatenate(),
-            ResBlock(320),
+            ResBlock(320, must_conv2d=True),
             SpatialTransformer(8, 40, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(320),
+            ResBlock(320, must_conv2d=True),
             SpatialTransformer(8, 40, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(320),
+            ResBlock(320, must_conv2d=True),
             SpatialTransformer(8, 40, fully_connected=False),
             # Exit flow
             keras.layers.GroupNormalization(epsilon=1e-5),
@@ -276,24 +276,24 @@ class ControlledUnetModel(keras.Model):
         # Upsampling flow
         ### SD Decoder
         for _ in range(3):
-            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]]); index += 1
             x = self.unet_layers[index]([x, t_emb]); index += 1
         x = self.unet_layers[index](x); index += 1
         ### SD Decoder 3
         for _ in range(3):
-            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]]); index += 1
             x = self.unet_layers[index]([x, t_emb]); index += 1
             x = self.unet_layers[index]([x, context]); index += 1
         x = self.unet_layers[index](x); index += 1
         ### SD Decoder 2
         for _ in range(3):
-            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]]); index += 1
             x = self.unet_layers[index]([x, t_emb]); index += 1
             x = self.unet_layers[index]([x, context]); index += 1
         x = self.unet_layers[index](x); index += 1
         ### SD Decoder 1
         for _ in range(3):
-            x = self.unet_layers[index]([x, output.pop() + control.pop()]); index += 1
+            x = self.unet_layers[index]([x, output.pop() + control.pop()]]); index += 1
             x = self.unet_layers[index]([x, t_emb]); index += 1
             x = self.unet_layers[index]([x, context]); index += 1
 
@@ -514,7 +514,13 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         images = inputs["jpg"]
         latents = self.image_encoder(images)
         # condition/prompt/txt refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/ldm/models/diffusion/ddpm.py#L767
-        encoded_text = inputs["txt"]
+        # encoded_text = inputs["txt"]
+        encoded_text = inputs["str"]
+        encoded_text = encoded_text.numpy().tolist()
+        encoded_text = [c.decode("utf-8") if isinstance(c, bytes) else c for c in encoded_text]
+        print(encoded_text)
+        # encoded_text = tf.convert_to_tensor([self.encode_text(text) for text in encoded_text])
+        encoded_text = tf.stack(tf.squeeze([self.encode_text(text) for text in encoded_text], axis=1), axis=0)
         # control refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/cldm/cldm.py#L318
         controls = inputs["hint"]
 
