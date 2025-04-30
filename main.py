@@ -174,7 +174,7 @@ def main():
                     continue
 
                 loss = model.train_step(batch)
-                batch_losses.append(loss['loss'] / args.batch_size)
+                batch_losses.append(loss['loss'])
                 epoch_loss += loss['loss']
                 batch_num += 1
                 print(f"Epoch {epoch+1}/{args.epochs}, Batch {batch_num}/{(train_dataset_length - 1) // args.batch_size + 1} Loss: {loss['loss']:.6f}")
@@ -200,7 +200,7 @@ def main():
                     except Exception as e:
                         print("Failed to save weights:", e)
 
-            avg_epoch_loss = epoch_loss / train_dataset_length
+            avg_epoch_loss = epoch_loss / batch_num
             epoch_losses.append(avg_epoch_loss)
             print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_epoch_loss:.6f}")
             
