@@ -1,71 +1,70 @@
-# 1. download fill50k.zip from https://huggingface.co/lllyasviel/ControlNet/tree/main/training
-# 2. make a 'training' folder in the root directory of this repo
-# 3. unzip and move 'fill50k' folder to 'training' folder
-# training/fill50k/source
-# training/fill50k/target
-# training/fill50k/prompt.json
-
 import json
 import cv2
 import numpy as np
 import tensorflow as tf
+from datasets import Dataset  # Hugging Face datasets
 
-def load_data(img_size, model):
-    with open('./training/fill50k/prompt.json', 'rt') as f:
-        for line in f:
-            item = json.loads(line)
+def read_prompt_dataset(path='./training/fill50k/prompt.json'):
+    with open(path, 'rt') as f:
+        items = [json.loads(line) for line in f]
+    return Dataset.from_list(items)
 
-            source_filename = item['source']
-            target_filename = item['target']
-            prompt = item['prompt']
-            # convert to utf-8
-            prompt = prompt.decode("utf-8") if isinstance(prompt, bytes) else prompt
-            encoded_text = model.encode_text(prompt)
+def preprocess_item(item, img_size, model):
+    source_path = './training/fill50k/' + item['source']
+    target_path = './training/fill50k/' + item['target']
+    prompt = item['prompt']
 
-            # convert from (1, 77, 768) to (77, 768)
-            encoded_text = np.squeeze(encoded_text, axis=0)
+    encoded_text = model.encode_text(prompt)
+    encoded_text = np.squeeze(encoded_text, axis=0)
 
-            source = cv2.imread('./training/fill50k/' + source_filename)
-            target = cv2.imread('./training/fill50k/' + target_filename)
+    source = cv2.imread(source_path)
+    target = cv2.imread(target_path)
 
-            # BRG to RGB
-            source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
-            target = cv2.cvtColor(target, cv2.COLOR_BGR2RGB)
+    source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
+    target = cv2.cvtColor(target, cv2.COLOR_BGR2RGB)
 
-            # normalize source to 0-1 range
-            source = source.astype(np.float32) / 255.0
+    source = cv2.resize(source, (img_size, img_size)).astype(np.float32) / 255.0
+    target = cv2.resize(target, (img_size, img_size)).astype(np.float32)
+    target = (target / 127.5) - 1.0
 
-            # normalize target to -1 to 1 range
-            target = (target.astype(np.float32) / 127.5) - 1.0
+    return {
+        'jpg': target,
+        'hint': source,
+        'txt': encoded_text,
+        'str': prompt
+    }
 
-            # resize to img_size x img_size
-            source = cv2.resize(source, (img_size, img_size))
-            target = cv2.resize(target, (img_size, img_size))
-
-            yield {
-                'jpg': target,
-                'hint': source,
-                'txt': encoded_text
-            }
+def make_generator(dataset, img_size, model):
+    def gen():
+        for item in dataset:
+            yield preprocess_item(item, img_size, model)
+    return gen
 
 def get_dataset(model, batch_size, img_size, shuffle_seed=42):
-    dataset = tf.data.Dataset.from_generator(
-        lambda: load_data(img_size, model),
-        output_signature={
-            'jpg': tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
-            'hint': tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
-            'txt': tf.TensorSpec(shape=(77, 768), dtype=tf.float32)
-        }
+    prompt_dataset = read_prompt_dataset()
+    prompt_split = prompt_dataset.train_test_split(test_size=0.2, seed=shuffle_seed)
+
+    train_items = prompt_split["train"]
+    test_items = prompt_split["test"]
+
+    output_signature = {
+        'jpg': tf.TensorSpec(shape=(img_size, img_size, 3), dtype=tf.float32),
+        'hint': tf.TensorSpec(shape=(img_size, img_size, 3), dtype=tf.float32),
+        'txt': tf.TensorSpec(shape=(77, 768), dtype=tf.float32),
+        'str': tf.TensorSpec(shape=(), dtype=tf.string)
+    }
+
+    train_dataset = tf.data.Dataset.from_generator(
+        make_generator(train_items, img_size, model),
+        output_signature=output_signature
     )
 
-    dataset_length = 50000 # fixed
-
-    # split dataset into train and test
-    train_size = int(dataset_length * 0.8)
-    train_dataset = dataset.take(train_size)
-    test_dataset = dataset.skip(train_size)
+    test_dataset = tf.data.Dataset.from_generator(
+        make_generator(test_items, img_size, model),
+        output_signature=output_signature
+    )
 
     train_dataset = train_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     test_dataset = test_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
-    return train_dataset, test_dataset, dataset_length
+    return train_dataset, test_dataset, len(prompt_dataset)
