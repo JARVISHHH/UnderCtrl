@@ -40,6 +40,8 @@ def test_get_dataset():
 
     train_dataset, test_dataset, dataset_length = get_dataset(model, batch_size=1, img_size=256)
 
+    print(f"Dataset length: {dataset_length}")
+
     for i, data in enumerate(train_dataset):
         print(f"Batch {i}:")
         print(f"jpg shape: {data['jpg'].shape}")
@@ -56,19 +58,33 @@ def test_get_dataset():
         plt.title("hint")
         plt.show()
         
-        print(f"txt: {data['txt']}")
+        print(f"txt: {data['txt'].shape}")
+        print(f"str: {data['str']}")
         if i == 1:
             break
     print("Test for train dataset completed.")
     
-    # for i, data in enumerate(test_dataset):
-    #     print(f"Batch {i}:")
-    #     print(f"jpg shape: {data['jpg'].shape}")
-    #     print(f"hint shape: {data['hint'].shape}")
-    #     print(f"txt: {data['txt']}")
-    #     if i == 1:
-    #         break
-    # print("Test for test dataset completed.")
+    for i, data in enumerate(test_dataset):
+        print(f"Batch {i}:")
+        print(f"jpg shape: {data['jpg'].shape}")
+        print(f"hint shape: {data['hint'].shape}")
+
+        # plot the image example
+        plt.imshow(data['jpg'][0])
+        plt.axis('off')
+        plt.title("jpg")
+        plt.show()
+
+        plt.imshow(data['hint'][0])
+        plt.axis('off')
+        plt.title("hint")
+        plt.show()
+
+        print(f"txt: {data['txt'].shape}")
+        print(f"str: {data['str']}")
+        if i == 1:
+            break
+    print("Test for test dataset completed.")
     
 if __name__ == "__main__":
     test_get_dataset()
