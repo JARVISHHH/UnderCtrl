@@ -174,10 +174,10 @@ def main():
                     continue
 
                 loss = model.train_step(batch)
-                batch_losses.append(loss['loss'])
+                batch_losses.append(loss['loss'] / args.batch_size)
                 epoch_loss += loss['loss']
                 batch_num += 1
-                print(f"Epoch {epoch+1}/{args.epochs}, Batch {batch_num}/{train_dataset_length // args.batch_size} Loss: {loss['loss']:.6f}")
+                print(f"Epoch {epoch+1}/{args.epochs}, Batch {batch_num}/{(train_dataset_length - 1) // args.batch_size + 1} Loss: {loss['loss']:.6f}")
                 
                 # save the model weights after every 100 batches
                 if batch_num % 20 == 0:
