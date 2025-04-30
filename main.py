@@ -3,6 +3,7 @@
 # resume training: python main.py --dataset <dataset> --epochs <epochs> --resume --load_current --train --save_imgs
 # test only: python main.py --dataset <dataset> --resume --load_best_epoch --test
 # keep batch size same for train and test
+# inference: python main.py --dataset <dataset> --resume --load_current --inference
 
 import argparse
 import tensorflow as tf
@@ -41,6 +42,7 @@ def parse_args():
     parser.add_argument('--train', action='store_true', help='Train the model') # Set to True to train the model
     parser.add_argument('--save_imgs', action='store_true', help='Save images') # Set to True to save images
     parser.add_argument('--test', action='store_true', help='Test the model') # Set to True to test the model
+    parser.add_argument('--inference', action='store_true', help='Run inference') # Set to True to run inference
     return parser.parse_args()
 
 def main():
@@ -49,6 +51,7 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True) # if exists, do nothing
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
+    stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
 
     if args.dataset == 'fill50k':
         from test_imgs import fill50k
@@ -246,7 +249,6 @@ def main():
             captions.extend(batch['txt'].numpy().tolist())
         captions = [c.decode('utf-8') if isinstance(c, bytes) else c for c in captions]
         generated_images_sd = []
-        stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
 
         for caption in captions[0:args.batch_size]:
             generated_images_sd.append(stable_diffusion.text_to_image(caption, batch_size=1)[0])
@@ -280,6 +282,42 @@ def main():
         print("Control Net: " + str(fid_score_controlnet))
                     
         print("----------Finish Testing----------")
+
+    if args.inference:
+        print("----------Start Inference----------")
+
+        sample = next(iter(test_dataset))
+
+        # (8, 256, 256, 3) => (1, 256, 256, 3)
+        sample = {k: v[0] for k, v in sample.items()}
+        sample = {k: tf.expand_dims(v, axis=0) for k, v in sample.items()}
+
+        text = sample['str']
+        text_str = text.numpy()[0].decode('utf-8')
+        image = sample['jpg']
+        hint = sample['hint']
+
+        # generate sd image
+        sd_image = stable_diffusion.text_to_image(text_str, batch_size=1)[0]
+
+        # generate cn image
+        cn_image = model.predict(sample)
+
+        # plot image, hint, sd_image, cn_image, text as title
+        fig, axs = plt.subplots(2, 2, figsize=(10, 10))
+        axs[0, 0].imshow(image[0])
+        axs[0, 0].set_title("Original Image")
+        axs[0, 1].imshow(hint[0])
+        axs[0, 1].set_title("Hint Image")
+        axs[1, 0].imshow(sd_image)
+        axs[1, 0].set_title("Stable Diffusion Image")
+        axs[1, 1].imshow(cn_image[0])
+        axs[1, 1].set_title("ControlNet Image")
+        for ax in axs.flat:
+            ax.axis('off')
+        plt.tight_layout()
+        plt.show()
+        print("----------Finish Inference----------")
 
 def resize_images(images, target_size=(299, 299)):
     images = tf.convert_to_tensor(images, dtype=tf.float32)

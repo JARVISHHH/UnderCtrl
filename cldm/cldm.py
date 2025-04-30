@@ -388,7 +388,6 @@ class ControlSDB(keras_cv.models.StableDiffusion):
                 name='mean_squared_error'
             )
             loss = loss_fn(target, eps)
-            loss = tf.cast(loss, tf.float32)
         
         trainable_vars = self.control_model.trainable_variables + self.diffuser.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
@@ -398,7 +397,7 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         return { 'loss': loss }
 
     def predict(self, inputs):
-        latents, encoded_text, control = self.get_input(inputs)
+        latents, encoded_text, controls = self.get_input(inputs)
         batch_size = tf.shape(latents)[0]
         
         timesteps = np.random.randint(0, self.noise_scheduler.train_timesteps, (batch_size,))
