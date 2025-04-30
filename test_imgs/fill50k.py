@@ -2,7 +2,8 @@ import json
 import cv2
 import numpy as np
 import tensorflow as tf
-from datasets import Dataset  # Hugging Face datasets
+from datasets import Dataset, load_from_disk  # Hugging Face datasets
+import os
 
 def read_prompt_dataset(path='./training/fill50k/prompt.json'):
     with open(path, 'rt') as f:
@@ -40,9 +41,15 @@ def make_generator(dataset, img_size, model):
             yield preprocess_item(item, img_size, model)
     return gen
 
-def get_dataset(model, batch_size, img_size, shuffle_seed=42, test_size=0.2):
-    prompt_dataset = read_prompt_dataset()
-    prompt_split = prompt_dataset.train_test_split(test_size=test_size, seed=shuffle_seed)
+def get_dataset(model, batch_size, img_size, test_size=0.2):
+    if os.path.exists("training/fill50k_prompt_split"):
+        prompt_split = load_from_disk("training/fill50k_prompt_split")
+        print("Loaded dataset from disk.")
+    else:
+        prompt_dataset = read_prompt_dataset()
+        prompt_split = prompt_dataset.train_test_split(test_size=test_size)
+        prompt_split.save_to_disk("training/fill50k_prompt_split")
+        print("Dataset split and saved to disk.")
 
     train_items = prompt_split["train"]
     test_items = prompt_split["test"]
@@ -67,4 +74,4 @@ def get_dataset(model, batch_size, img_size, shuffle_seed=42, test_size=0.2):
     train_dataset = train_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     test_dataset = test_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
-    return train_dataset, test_dataset, len(prompt_dataset)
+    return train_dataset, test_dataset, len(train_items) + len(test_items)
