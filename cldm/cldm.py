@@ -21,12 +21,11 @@ class ControlNet(keras.Model):
         super().__init__()
 
         # Time embedding
-        self.time_embedding_model = tf.keras.Sequential([
-            # keras.layers.Input((320,), name="timestep_embedding"),
+        self.time_embedding_layers = [
             keras.layers.Dense(1280),
             keras.layers.Activation("swish"),
             keras.layers.Dense(1280),
-        ])
+        ]
 
         # Compute hint embedding. See cldm/cldm.py Line 147.
         self.hint_embedding_model = tf.keras.Sequential([
@@ -62,7 +61,7 @@ class ControlNet(keras.Model):
             PaddedConv2D(320, 3, strides=2, padding=1),
             ZeroPaddedConv2D(filters=320, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_4'),  # Control
             ### SD Encoder Block 2
-            ResBlock(640),
+            ResBlock(640, must_conv2d=True),
             SpatialTransformer(8, 80, fully_connected=False),
             ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_5'),  # Control
             ResBlock(640),
@@ -71,7 +70,7 @@ class ControlNet(keras.Model):
             PaddedConv2D(640, 3, strides=2, padding=1),
             ZeroPaddedConv2D(filters=640, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_7'),  # Control
             ### SD Encoder Block 3
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             SpatialTransformer(8, 160, fully_connected=False),
             ZeroPaddedConv2D(filters=1280, kernel_size=1, strides=1, padding=0, name='control_zeroconv2d_8'),  # Control
             ResBlock(1280),
@@ -93,8 +92,11 @@ class ControlNet(keras.Model):
 
     def __call__(self, inputs):
         context, t_embed_input, latent, control = inputs
-        t_emb = self.time_embedding_model(t_embed_input)
         guided_hint = self.hint_embedding_model(control)
+
+        t_emb = self.time_embedding_layers[0](t_embed_input)
+        t_emb = self.time_embedding_layers[1](t_emb)
+        t_emb = self.time_embedding_layers[2](t_emb)
 
         index = 0
         final_output = []
@@ -144,80 +146,80 @@ class ControlledUnetModel(keras.Model):
         super().__init__()
 
         # Time embedding
-        self.time_embedding_model = tf.keras.Sequential([
+        self.time_embedding_layers = [
             keras.layers.Dense(1280),
             keras.layers.Activation("swish"),
             keras.layers.Dense(1280),
-        ])
+        ]
 
         self.unet_layers = [
             # Downsampling flow
-            PaddedConv2D(320, kernel_size=3, padding=1, trainable=False, name='lock_1'),
+            PaddedConv2D(320, kernel_size=3, padding=1, trainable=False),
             ### SD Encoder Block 1
-            ResBlock(320, trainable=False, name='lock_2'),
-            SpatialTransformer(8, 40, fully_connected=False, trainable=False, name='lock_3'),
-            ResBlock(320, trainable=False, name='lock_4'),
-            SpatialTransformer(8, 40, fully_connected=False, trainable=False, name='lock_5'),
-            PaddedConv2D(320, 3, strides=2, padding=1, trainable=False, name='lock_6'),
+            ResBlock(320, trainable=False),
+            SpatialTransformer(8, 40, fully_connected=False, trainable=False),
+            ResBlock(320, trainable=False),
+            SpatialTransformer(8, 40, fully_connected=False, trainable=False),
+            PaddedConv2D(320, 3, strides=2, padding=1, trainable=False),
             ### SD Encoder Block 2
-            ResBlock(640, trainable=False, name='lock_7'),
-            SpatialTransformer(8, 80, fully_connected=False, trainable=False, name='lock_8'),
-            ResBlock(640, trainable=False, name='lock_9'),
-            SpatialTransformer(8, 80, fully_connected=False, trainable=False, name='lock_10'),
-            PaddedConv2D(640, 3, strides=2, padding=1, trainable=False, name='lock_11'),
+            ResBlock(640, must_conv2d=True, trainable=False),
+            SpatialTransformer(8, 80, fully_connected=False, trainable=False),
+            ResBlock(640, trainable=False),
+            SpatialTransformer(8, 80, fully_connected=False, trainable=False),
+            PaddedConv2D(640, 3, strides=2, padding=1, trainable=False),
             ### SD Encoder Block 3
-            ResBlock(1280, trainable=False, name='lock_12'),
-            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_13'),
-            ResBlock(1280, trainable=False, name='lock_14'),
-            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_15'),
-            PaddedConv2D(1280, 3, strides=2, padding=1, trainable=False, name='lock_16'),
+            ResBlock(1280, must_conv2d=True, trainable=False),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
+            ResBlock(1280, trainable=False),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
+            PaddedConv2D(1280, 3, strides=2, padding=1, trainable=False),
             ### SD Encoder Block
-            ResBlock(1280, trainable=False, name='lock_17'),
-            ResBlock(1280, trainable=False, name='lock_18'),
+            ResBlock(1280, trainable=False),
+            ResBlock(1280, trainable=False),
             # Middle flow
-            ResBlock(1280, trainable=False, name='lock_19'),
-            SpatialTransformer(8, 160, fully_connected=False, trainable=False, name='lock_20'),
-            ResBlock(1280, trainable=False, name='lock_21'),
+            ResBlock(1280, trainable=False),
+            SpatialTransformer(8, 160, fully_connected=False, trainable=False),
+            ResBlock(1280, trainable=False),
             # Upsampling flow
             ### SD Decoder
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             Upsample(1280),
             ### SD Decoder 3
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             SpatialTransformer(8, 160, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             SpatialTransformer(8, 160, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(1280),
+            ResBlock(1280, must_conv2d=True),
             SpatialTransformer(8, 160, fully_connected=False),
             Upsample(1280),
             ### SD Decoder 2
             keras.layers.Concatenate(),
-            ResBlock(640),
+            ResBlock(640, must_conv2d=True),
             SpatialTransformer(8, 80, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(640),
+            ResBlock(640, must_conv2d=True),
             SpatialTransformer(8, 80, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(640),
+            ResBlock(640, must_conv2d=True),
             SpatialTransformer(8, 80, fully_connected=False),
             Upsample(640),
             ### SD Decoder 1
             keras.layers.Concatenate(),
-            ResBlock(320),
+            ResBlock(320, must_conv2d=True),
             SpatialTransformer(8, 40, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(320),
+            ResBlock(320, must_conv2d=True),
             SpatialTransformer(8, 40, fully_connected=False),
             keras.layers.Concatenate(),
-            ResBlock(320),
+            ResBlock(320, must_conv2d=True),
             SpatialTransformer(8, 40, fully_connected=False),
             # Exit flow
             keras.layers.GroupNormalization(epsilon=1e-5),
@@ -227,7 +229,10 @@ class ControlledUnetModel(keras.Model):
 
     def __call__(self, inputs):
         context, t_embed_input, latent, control = inputs
-        t_emb = self.time_embedding_model(t_embed_input)
+        
+        t_emb = self.time_embedding_layers[0](t_embed_input)
+        t_emb = self.time_embedding_layers[1](t_emb)
+        t_emb = self.time_embedding_layers[2](t_emb)
 
         index = 0
         output = []
@@ -312,8 +317,12 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         self.noise_scheduler = keras_cv.models.stable_diffusion.NoiseScheduler()
         self.max_grad_norm = 1.0
 
+        keras.backend.clear_session()
+
         self.control_model = ControlNet(img_height, img_width)
         self.control_scales = [1.0] * 13
+
+        keras.backend.clear_session()
 
         self.diffuser = ControlledUnetModel()
 
@@ -396,50 +405,108 @@ class ControlSDB(keras_cv.models.StableDiffusion):
 
         return { 'loss': loss }
 
-    def predict(self, inputs):
-        latents, encoded_text, controls = self.get_input(inputs)
-        batch_size = tf.shape(latents)[0]
-        
-        timesteps = np.random.randint(0, self.noise_scheduler.train_timesteps, (batch_size,))
-        
-        for t in timesteps:
-            t = tf.cast(t, 'int32')
-            
-            alpha_prod_t = tf.maximum(self.noise_scheduler.alphas_cumprod[t], 1e-6)
-            alpha_prod_t_prev = tf.maximum(
-                self.noise_scheduler.alphas_cumprod[t-1] if t > 0 else 1.0,
-                1e-6
+    def predict(self, inputs, num_steps=50, unconditional_guidance_scale=7.5):
+        targets, encoded_text, controls = self.get_input(inputs)
+
+        batch_size = targets.shape[0]
+
+        unconditional_context = tf.repeat(
+                self._get_unconditional_context(), batch_size, axis=0
             )
-            
-            t_embed = tf.stop_gradient(timestep_embedding(tf.repeat(t, batch_size)))
-            
-            if isinstance(encoded_text, list):
-                encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
-            else:
-                encoded_text = tf.convert_to_tensor(encoded_text)
 
-            control = self.control_model([encoded_text, t_embed, latents, controls])
+        latents = tf.random.normal(shape=tf.shape(targets), dtype=targets.dtype)
+
+        # Iterative reverse diffusion stage
+        num_timesteps = 1000
+        ratio = (
+            (num_timesteps - 1) / (num_steps - 1)
+            if num_steps > 1
+            else num_timesteps
+        )
+        timesteps = (np.arange(0, num_steps) * ratio).round().astype(np.int64)
+
+        alphas, alphas_prev = self._get_initial_alphas(timesteps)
+        progbar = keras.utils.Progbar(len(timesteps))
+        iteration = 0
+        for index, timestep in list(enumerate(timesteps))[::-1]:
+            latent_prev = latents  # Set aside the previous latent vector
+            t_emb = self._get_timestep_embedding(timestep, batch_size)
+
+            unconditional_control = self.control_model([unconditional_context, t_emb, latents, controls])
+            unconditional_control = [c * scale for c, scale in zip(unconditional_control, self.control_scales)]
+            unconditional_latents = self.diffuser([unconditional_context, t_emb, latents, unconditional_control])
+
+            control = self.control_model([encoded_text, t_emb, latents, controls])
             control = [c * scale for c, scale in zip(control, self.control_scales)]
-       
-            eps = self.diffuser([encoded_text, t_embed, latents, control])
-            
-            # Copying part of noise_scheduler's step function because it's incompatible with the keras_cv version
-            beta_prod_t = 1 - alpha_prod_t
-            pred_original = (latents - beta_prod_t**0.5 * eps) / tf.maximum(alpha_prod_t**0.5, 1e-3)
-            
-            variance = (beta_prod_t / alpha_prod_t) * (1 - alpha_prod_t_prev / alpha_prod_t)
-            noise = tf.random.normal(tf.shape(latents)) if t > 0 else 0.0
-            temp = alpha_prod_t_prev**0.5 * pred_original + tf.sqrt(variance) * noise
+            latents = self.diffuser([encoded_text, t_emb, latents, control])
 
-            if tf.reduce_any(tf.math.is_nan(temp)):
-                print(f"NaN detected at t={t} - resetting latents")
-                break
-                
-            latents = temp
+            latents = tf.convert_to_tensor(
+                unconditional_latents
+                + unconditional_guidance_scale * (latents - unconditional_latents)
+            )
+            a_t, a_prev = alphas[index], alphas_prev[index]
+            # Keras backend array need to cast explicitly
+            target_dtype = latent_prev.dtype
+            latents = tf.cast(latents, target_dtype)
+            pred_x0 = (latent_prev - tf.math.sqrt(1 - a_t) * latents) / tf.math.sqrt(
+                a_t
+            )
+            latents = (
+                tf.convert_to_tensor(latents) * tf.math.sqrt(1.0 - a_prev)
+                + tf.math.sqrt(a_prev) * pred_x0
+            )
+            iteration += 1
+            progbar.update(iteration)
+
+        # Decoding stage
+        decoded = self.decoder.predict_on_batch(latents)
+        decoded = ((decoded + 1) / 2) * 255
+        return np.clip(decoded, 0, 255).astype("uint8")
         
-        images = self.decoder(latents)
-        images = tf.clip_by_value(images, -1.0, 1.0)
-        return (images + 1.0) * 127.5
+        # latents, encoded_text, controls = self.get_input(inputs)
+        # batch_size = tf.shape(latents)[0]
+        
+        # timesteps = np.random.randint(0, self.noise_scheduler.train_timesteps, (batch_size,))
+        
+        # for t in timesteps:
+        #     t = tf.cast(t, 'int32')
+            
+        #     alpha_prod_t = tf.maximum(self.noise_scheduler.alphas_cumprod[t], 1e-6)
+        #     alpha_prod_t_prev = tf.maximum(
+        #         self.noise_scheduler.alphas_cumprod[t-1] if t > 0 else 1.0,
+        #         1e-6
+        #     )
+            
+        #     t_embed = timestep_embedding(tf.repeat(t, batch_size))
+            
+        #     if isinstance(encoded_text, list):
+        #         encoded_text = tf.stack(tf.squeeze(encoded_text, axis=1), axis=0)
+        #     else:
+        #         encoded_text = tf.convert_to_tensor(encoded_text)
+
+        #     control = self.control_model([encoded_text, t_embed, latents, controls])
+        #     control = [c * scale for c, scale in zip(control, self.control_scales)]
+       
+        #     eps = self.diffuser([encoded_text, t_embed, latents, control])
+            
+        #     # Copying part of noise_scheduler's step function because it's incompatible with the keras_cv version
+        #     beta_prod_t = 1 - alpha_prod_t
+        #     pred_original = (latents - beta_prod_t**0.5 * eps) / tf.maximum(alpha_prod_t**0.5, 1e-3)
+            
+        #     variance = (beta_prod_t / alpha_prod_t) * (1 - alpha_prod_t_prev / alpha_prod_t)
+        #     noise = tf.random.normal(tf.shape(latents)) if t > 0 else 0.0
+        #     temp = alpha_prod_t_prev**0.5 * pred_original + tf.sqrt(variance) * noise
+
+        #     if tf.reduce_any(tf.math.is_nan(temp)):
+        #         print(f"NaN detected at t={t} - resetting latents")
+        #         break
+                
+        #     latents = temp
+        
+        # images = self.decoder(latents)
+        # images = tf.clip_by_value(images, -1.0, 1.0)
+        # return (images + 1.0) * 127.5
+        
 
     def get_input(self, inputs):
         # TODO: should images be rearranged? from (b h w c) to (b c h w)?
@@ -447,7 +514,13 @@ class ControlSDB(keras_cv.models.StableDiffusion):
         images = inputs["jpg"]
         latents = self.image_encoder(images)
         # condition/prompt/txt refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/ldm/models/diffusion/ddpm.py#L767
-        encoded_text = inputs["txt"]
+        # encoded_text = inputs["txt"]
+        encoded_text = inputs["str"]
+        encoded_text = encoded_text.numpy().tolist()
+        encoded_text = [c.decode("utf-8") if isinstance(c, bytes) else c for c in encoded_text]
+        print(encoded_text)
+        # encoded_text = tf.convert_to_tensor([self.encode_text(text) for text in encoded_text])
+        encoded_text = tf.stack(tf.squeeze([self.encode_text(text) for text in encoded_text], axis=1), axis=0)
         # control refer to get_input() in https://github.com/lllyasviel/ControlNet/blob/main/cldm/cldm.py#L318
         controls = inputs["hint"]
 

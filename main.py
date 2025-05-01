@@ -49,6 +49,7 @@ def main():
     args = parse_args()
 
     os.makedirs(args.save_dir, exist_ok=True) # if exists, do nothing
+    os.makedirs("outputs", exist_ok=True) # if exists, do nothing
 
     model = ControlSDB(optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr), img_height=args.img_size, img_width=args.img_size)
     stable_diffusion = keras_cv.models.StableDiffusion(img_width=args.img_size, img_height=args.img_size)
@@ -144,12 +145,54 @@ def main():
     else:
         print("Loading original weights...")
         try:
-            file = keras.utils.get_file(
-                                    origin="https://huggingface.co/fchollet/stable-diffusion/resolve/main/kcv_diffusion_model.h5",  # noqa: E501
-                                    file_hash="8799ff9763de13d7f30a683d653018e114ed24a6a819667da4f5ee10f9e805fe",  # noqa: E501
-            )
-            model.control_model.load_weights(file, by_name=True, skip_mismatch=True)
-            model.diffuser.load_weights(file, by_name=True, skip_mismatch=True)
+            # file = keras.utils.get_file(
+            #                         origin="https://huggingface.co/fchollet/stable-diffusion/resolve/main/kcv_diffusion_model.h5",  # noqa: E501
+            #                         file_hash="8799ff9763de13d7f30a683d653018e114ed24a6a819667da4f5ee10f9e805fe",  # noqa: E501
+            # )
+            # print("Loading control model.")
+            # original_weights = {layer.name: layer.get_weights() for layer in model.control_model.layers}
+            # model.control_model.load_weights(file, skip_mismatch=True)
+            # for layer in model.control_model.layers:
+            #     before = original_weights[layer.name]
+            #     after = layer.get_weights()
+            #     if any((b != a).any() for b, a in zip(before, after)):
+            #         print(f"Control Model weights loaded for layer: {layer.name}")
+
+            # print("Loading diffuser model.")
+            # original_weights = {layer.name: layer.get_weights() for layer in model.diffuser.layers}
+            # model.diffuser.load_weights(file)
+            # for layer in model.diffuser.layers:
+            #     before = original_weights[layer.name]
+            #     after = layer.get_weights()
+            #     if any((b != a).any() for b, a in zip(before, after)):
+            #         print(f"Diffuser weights loaded for layer: {layer.name}")
+
+            keras.backend.clear_session()
+
+            original_diffusion_model = keras_cv.models.stable_diffusion.DiffusionModel(args.img_size, args.img_size, 77)
+
+            original_weights = {layer.name: layer.get_weights() for layer in original_diffusion_model.layers}
+
+            for layer in model.control_model.layers:
+                if layer.name in original_weights:
+                    try:
+                        layer.set_weights(original_weights[layer.name])
+                        print(f"[Loaded] {layer.name}")
+                    except Exception as e:
+                        print(f"[Mismatch] {layer.name}: {e}")
+                else:
+                    print(f"[Skipped] {layer.name} (not found)")
+
+            for layer in model.diffuser.layers:
+                if layer.name in original_weights:
+                    try:
+                        layer.set_weights(original_weights[layer.name])
+                        print(f"[Loaded] {layer.name}")
+                    except Exception as e:
+                        print(f"[Mismatch] {layer.name}: {e}")
+                else:
+                    print(f"[Skipped] {layer.name} (not found)")
+
             print("Loaded weights successfully.")
         except Exception as e:
             print("Failed to load weights:", e)
@@ -296,6 +339,14 @@ def main():
     if args.inference:
         print("----------Start Inference----------")
 
+        for layer in model.diffuser.layers:
+            before = original_weights[layer.name]
+            after = layer.get_weights()
+            if any((b != a).any() for b, a in zip(before, after)):
+                print(f"Diffuser weights different for layer: {layer.name}")
+                
+        print("compare finished")
+
         sample = next(iter(test_dataset))
 
         # (8, 256, 256, 3) => (1, 256, 256, 3)
@@ -329,7 +380,7 @@ def main():
         plt.suptitle(text_str, fontsize=16)
         plt.savefig(f"outputs/inference_{text_str}.png")
         print(f"Saved inference image as outputs/inference_{text_str}.png")
-        plt.show()
+        # plt.show()
         print("----------Finish Inference----------")
 
 def resize_images(images, target_size=(299, 299)):

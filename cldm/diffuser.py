@@ -212,7 +212,7 @@ class DiffusionModelV2(keras.Model):
 
 
 class ResBlock(keras.layers.Layer):
-    def __init__(self, output_dim, **kwargs):
+    def __init__(self, output_dim, must_conv2d = False, **kwargs):
         super().__init__(**kwargs)
         self.output_dim = output_dim
         self.entry_flow = [
@@ -229,12 +229,16 @@ class ResBlock(keras.layers.Layer):
             keras.layers.Activation("swish"),
             PaddedConv2D(output_dim, 3, padding=1),
         ]
+        self.residual_projection = None
+        if must_conv2d is True:
+            self.residual_projection = PaddedConv2D(self.output_dim, 1)
 
     def build(self, input_shape):
-        if input_shape[0][-1] != self.output_dim:
-            self.residual_projection = PaddedConv2D(self.output_dim, 1)
-        else:
-            self.residual_projection = lambda x: x
+        if self.residual_projection is None:
+            if input_shape[0][-1] != self.output_dim:
+                self.residual_projection = PaddedConv2D(self.output_dim, 1)
+            else:
+                self.residual_projection = lambda x: x
 
     def call(self, inputs):
         inputs, embeddings = inputs
