@@ -167,7 +167,11 @@ def main():
             #     if any((b != a).any() for b, a in zip(before, after)):
             #         print(f"Diffuser weights loaded for layer: {layer.name}")
 
-            original_weights = {layer.name: layer.get_weights() for layer in stable_diffusion.diffusion_model.layers}
+            keras.backend.clear_session()
+
+            original_diffusion_model = keras_cv.models.stable_diffusion.DiffusionModel(args.img_size, args.img_size, 77)
+
+            original_weights = {layer.name: layer.get_weights() for layer in original_diffusion_model.layers}
 
             for layer in model.control_model.layers:
                 if layer.name in original_weights:
@@ -335,7 +339,6 @@ def main():
     if args.inference:
         print("----------Start Inference----------")
 
-        original_weights = {layer.name: layer.get_weights() for layer in stable_diffusion.diffusion_model.layers}
         for layer in model.diffuser.layers:
             before = original_weights[layer.name]
             after = layer.get_weights()
