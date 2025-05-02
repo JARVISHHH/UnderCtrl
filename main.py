@@ -352,44 +352,50 @@ def main():
         sample = next(iterator)
 
         # (8, 256, 256, 3) => (1, 256, 256, 3)
-        sample = {k: v[0] for k, v in sample.items()}
-        sample = {k: tf.expand_dims(v, axis=0) for k, v in sample.items()}
+        # sample = {k: v[0] for k, v in sample.items()}
+        # sample = {k: tf.expand_dims(v, axis=0) for k, v in sample.items()}
 
         text = sample['str']
-        text_str = text.numpy()[0].decode('utf-8')
         image = sample['jpg']
         hint = sample['hint']
 
         # generate cn image
-        cn_image = model.predict(sample)
+        cn_images = model.predict(sample)
+        sd_images = []
+        text_strs = []
 
-        # generate sd image
-        sd_image = stable_diffusion.text_to_image(text_str, batch_size=1)[0]
+        for i in range(args.batch_size):
+            text_str = text.numpy()[i].decode('utf-8')
+            text_strs.append(text_str)
 
-        # plot image, hint, sd_image, cn_image, text as title
-        fig, axs = plt.subplots(2, 2, figsize=(10, 10))
-        axs[0, 0].imshow((image[0] + 1) / 2)
-        axs[0, 0].set_title("Original Image")
-        axs[0, 1].imshow(hint[0])
-        axs[0, 1].set_title("Hint Image")
-        axs[1, 0].imshow(sd_image)
-        axs[1, 0].set_title("Stable Diffusion Image")
-        axs[1, 1].imshow(cn_image[0])
-        axs[1, 1].set_title("ControlNet Image")
-        for ax in axs.flat:
-            ax.axis('off')
-        plt.tight_layout(rect=[0, 0, 1, 0.95])
-        plt.suptitle(text_str, fontsize=16)
-        plt.savefig(f"outputs/inference_{text_str}.png")
-        print(f"Saved inference image as outputs/inference_{text_str}.png")
-        # plt.show()
+            # generate sd image
+            sd_image = stable_diffusion.text_to_image(text_str, batch_size=1)[0]
+            sd_images.append(sd_image)
 
-        save_image_pil(np.array([sd_image]), "outputs/sd", "sd")
-        save_image_pil(cn_image, "outputs/cn", "cn")
-        save_image_pil(np.array([image[0]]), "outputs/jpg", "jpg")
+            # plot image, hint, sd_image, cn_image, text as title
+            fig, axs = plt.subplots(2, 2, figsize=(10, 10))
+            axs[0, 0].imshow((image[i] + 1) / 2)
+            axs[0, 0].set_title("Original Image")
+            axs[0, 1].imshow(hint[i])
+            axs[0, 1].set_title("Hint Image")
+            axs[1, 0].imshow(sd_image)
+            axs[1, 0].set_title("Stable Diffusion Image")
+            axs[1, 1].imshow(cn_images[i])
+            axs[1, 1].set_title("ControlNet Image")
+            for ax in axs.flat:
+                ax.axis('off')
+            plt.tight_layout(rect=[0, 0, 1, 0.95])
+            plt.suptitle(text_str, fontsize=16)
+            plt.savefig(f"outputs/inference_{text_str}.png")
+            print(f"Saved inference image as outputs/inference_{text_str}.png")
+            # plt.show()
+
+        save_image_pil(np.array(sd_images), "outputs/sd", "sd")
+        save_image_pil(cn_images, "outputs/cn", "cn")
+        save_image_pil(np.array(image), "outputs/jpg", "jpg")
         
-        clip_sd = calculate_clip_score([sd_image], [text_str])
-        clip_cn = calculate_clip_score([cn_image], [text_str])
+        clip_sd = calculate_clip_score(sd_images, text_strs)
+        clip_cn = calculate_clip_score(cn_images, text_strs)
         print('CLIP Score:')
         print("SD:", clip_sd)
         print("CN:", clip_cn)
@@ -410,7 +416,7 @@ def calculate_clip_score(image, text):
     image_embeds = tf.math.l2_normalize(image_embeds, axis=-1)
     text_embeds = tf.math.l2_normalize(text_embeds, axis=-1)
 
-    return tf.reduce_sum(image_embeds * text_embeds, axis=-1)
+    return tf.reduce_mean(image_embeds * text_embeds, axis=-1)
 
 def calculate_fid_score(real_dir, generated_dir):
     return fid.compute_fid(real_dir, generated_dir, device='cpu', num_workers=0)
