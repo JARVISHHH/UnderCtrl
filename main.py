@@ -340,13 +340,13 @@ def main():
     if args.inference:
         print("----------Start Inference----------")
 
-        for layer in model.diffuser.layers:
-            before = original_weights[layer.name]
-            after = layer.get_weights()
-            if any((b != a).any() for b, a in zip(before, after)):
-                print(f"Diffuser weights different for layer: {layer.name}")
+        # for layer in model.diffuser.layers:
+        #     before = original_weights[layer.name]
+        #     after = layer.get_weights()
+        #     if any((b != a).any() for b, a in zip(before, after)):
+        #         print(f"Diffuser weights different for layer: {layer.name}")
                 
-        print("compare finished")
+        # print("compare finished")
 
         iterator = iter(test_dataset)
         sample = next(iterator)
