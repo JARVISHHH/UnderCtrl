@@ -2,8 +2,10 @@
 
 ## Poster
 
-![poster](Poster.jpg)
+The poster is shown as follows. You can also view through the [link](https://docs.google.com/presentation/d/14GU204uFe8rfL5a4G3KywmDgZgvcrVceM4aWlyR2L_A/edit?slide=id.g356d2b38152_0_251&pli=1#slide=id.g356d2b38152_0_251) here.
 
+
+![poster](Poster.jpg)
 
 
 ## Writeup
