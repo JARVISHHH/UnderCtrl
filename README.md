@@ -2,7 +2,7 @@
 
 ## Poster
 
-![poster](.\Poster.jpg)
+![poster](Poster.jpg)
 
 
 
