@@ -368,7 +368,7 @@ def main():
 
         # plot image, hint, sd_image, cn_image, text as title
         fig, axs = plt.subplots(2, 2, figsize=(10, 10))
-        axs[0, 0].imshow(image[0])
+        axs[0, 0].imshow((image[0] + 1) / 2)
         axs[0, 0].set_title("Original Image")
         axs[0, 1].imshow(hint[0])
         axs[0, 1].set_title("Hint Image")
