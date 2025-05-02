@@ -15,6 +15,7 @@ Reuse stable diffusion in keras_cv.
 
 [Fine-tuning Example](https://keras.io/examples/generative/finetune_stable_diffusion/)
 
+[Original Pytorch Implementation](https://github.com/lllyasviel/ControlNet)
 
 
 ## Model architecture

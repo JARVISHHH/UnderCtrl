@@ -17,11 +17,12 @@ from transformers import TFCLIPModel, CLIPProcessor
 from PIL import Image
 import pickle
 import os
+from cleanfid import fid
 
 import matplotlib.pyplot as plt
 
 inception_model = InceptionV3(include_top=False, weights='imagenet', pooling='avg')
-clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=False, do_rescale=False)
+clip_tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=False)
 clip_model = TFCLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 
 def parse_args():
@@ -347,7 +348,8 @@ def main():
                 
         print("compare finished")
 
-        sample = next(iter(test_dataset))
+        iterator = iter(test_dataset)
+        sample = next(iterator)
 
         # (8, 256, 256, 3) => (1, 256, 256, 3)
         sample = {k: v[0] for k, v in sample.items()}
@@ -376,91 +378,42 @@ def main():
         axs[1, 1].set_title("ControlNet Image")
         for ax in axs.flat:
             ax.axis('off')
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
         plt.suptitle(text_str, fontsize=16)
         plt.savefig(f"outputs/inference_{text_str}.png")
         print(f"Saved inference image as outputs/inference_{text_str}.png")
         # plt.show()
+
+        save_image_pil(np.array([sd_image]), "outputs/sd", "sd")
+        save_image_pil(cn_image, "outputs/cn", "cn")
+        save_image_pil(np.array([image[0]]), "outputs/jpg", "jpg")
+        
+        clip_sd = calculate_clip_score([sd_image], [text_str])
+        clip_cn = calculate_clip_score([cn_image], [text_str])
+        print('CLIP Score:')
+        print("SD:", clip_sd)
+        print("CN:", clip_cn)
+
+        fid_sd = calculate_fid_score('outputs/jpg', 'outputs/sd')
+        fid_cn = calculate_fid_score('outputs/jpg', 'outputs/cn')
+        print('FID Score:')
+        print("SD:", fid_sd)
+        print("CN:", fid_cn)
+
         print("----------Finish Inference----------")
 
-def resize_images(images, target_size=(299, 299)):
-    images = tf.convert_to_tensor(images, dtype=tf.float32)
-    resized = tf.image.resize(images, size=target_size, method='bilinear')
-    return resized
+def calculate_clip_score(image, text):
+    inputs = clip_tokenizer(text=text, images=image, return_tensors="tf", padding=True)
+    outputs = clip_model(**inputs)
+    image_embeds = outputs.image_embeds 
+    text_embeds = outputs.text_embeds
+    image_embeds = tf.math.l2_normalize(image_embeds, axis=-1)
+    text_embeds = tf.math.l2_normalize(text_embeds, axis=-1)
 
-def calculate_clip_score(images, captions):
-    if isinstance(images, tf.Tensor):
-        images = images.numpy()
-    
-    clip_score = []
+    return tf.reduce_sum(image_embeds * text_embeds, axis=-1)
 
-    for i, image in enumerate(images):
-        if image.dtype != np.uint8:
-            image = np.clip(image, 0, 255).astype(np.uint8) / 255.0
-
-        inputs = clip_tokenizer(
-            text=captions[i],
-            images=image,
-            return_tensors="tf",
-            padding=True,
-            truncation=True
-        )
-
-        outputs = clip_model(**inputs)
-
-        image_embeddings = outputs.image_embeds
-        text_embeddings = outputs.text_embeds
-
-        # Normalize embeddings
-        image_embeddings = tf.math.l2_normalize(image_embeddings, axis=1)
-        text_embeddings = tf.math.l2_normalize(text_embeddings, axis=1)
-
-        similarity = tf.reduce_sum(image_embeddings * text_embeddings, axis=1)
-
-        clip_score.append(tf.reduce_mean(similarity).numpy().item())
-    
-    return np.mean(clip_score)
-    
-def get_activations(images: tf.Tensor):
-    # Assuming InceptionV3 accepts 299x299 images
-    images_resized = tf.image.resize(images, (299, 299))
-
-    images_resized = preprocess_input(images_resized)
-
-    activations = inception_model(images_resized, training=False)
-    return activations
-
-def calculate_fid_score(real_images, generated_images):
-    real_images = tf.concat(real_images, axis=0)
-    generated_images = tf.concat(generated_images, axis=0)
-
-    # d^2 = ||mu_1 – mu_2||^2 + Tr(c_1 + c_2 – 2*sqrt(c_1*c_2))
-    act_1 = get_activations(real_images)
-    act_2 = get_activations(generated_images)
-
-    mu_1 = tf.reduce_mean(act_1, axis=0)
-    mu_2 = tf.reduce_mean(act_2, axis=0)
-
-    c_1 = tfp.stats.covariance(act_1)
-    c_2 = tfp.stats.covariance(act_2)
-
-    try:
-        sqrt_c_1_mult_c_2 = tf.linalg.sqrtm(tf.matmul(c_1, c_2))
-        if tf.math.reduce_any(tf.math.is_nan(sqrt_c_1_mult_c_2)):
-            raise ValueError("NaN in sqrtm")
-        sqrt_c_1_mult_c_2 = tf.math.real(sqrt_c_1_mult_c_2)
-    except:
-        s, u, v = tf.linalg.svd(tf.matmul(c_1, c_2))
-        sqrt_c_1_mult_c_2 = u @ tf.linalg.diag(tf.sqrt(s)) @ tf.transpose(v)
-
-    if tf.math.reduce_any(tf.math.is_nan(sqrt_c_1_mult_c_2)) or tf.math.reduce_any(tf.math.is_inf(sqrt_c_1_mult_c_2)):
-        sqrt_c_1_mult_c_2 = tf.cast(tf.linalg.sqrtm(tf.cast(c_1 @ c_2, tf.complex64)), tf.float32)
-
-    if tf.math.reduce_any(tf.math.imag(sqrt_c_1_mult_c_2) != 0):
-        sqrt_c_1_mult_c_2 = tf.math.real(sqrt_c_1_mult_c_2)
-
-    fid = tf.reduce_sum(tf.square(mu_1 - mu_2)) + tf.linalg.trace(c_1 + c_2 - 2.0 * sqrt_c_1_mult_c_2)
-    return fid.numpy().item()
+def calculate_fid_score(real_dir, generated_dir):
+    return fid.compute_fid(real_dir, generated_dir, device='cpu', num_workers=0)
 
 def save_image_pil(image_batch, output_dir, prefix="img", batch_num=0):
     os.makedirs(output_dir, exist_ok=True)
