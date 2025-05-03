@@ -8,11 +8,15 @@ The poster is shown as follows. You can also view through the [link](https://doc
 ![poster](Poster.jpg)
 
 
-## Writeup
+## Final Writeup
 
 [Here](https://docs.google.com/document/d/1PJuSbflkGeQhEvMTdsGD9vPKli0-45zmXOs5r5Xqr_s/edit?tab=t.0) is our writeup.
 
+## Check-in Writeups
 
+[Second Check-in](https://docs.google.com/document/d/1_R167YI9wGU-Pzgc4ddqHDkIOoqUsvMuh1qihjykSVk/edit?usp=sharing)
+
+[Third Check-in](https://docs.google.com/document/d/1XVYoWyP1L2iDAooOcKyC1IbdhGMYS4KNO-vxa6Cq6Go/edit?usp=sharing)
 
 ## Environment for Oscar
 ```
